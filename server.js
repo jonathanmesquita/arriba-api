@@ -12,6 +12,18 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+function getModeLabel(mode = "geral") {
+  const labels = {
+    geral: "Geral",
+    datacob: "DataCob / Suporte",
+    sql: "SQL / Banco de Dados",
+    devops: "DevOps / Cloud",
+    produtividade: "Produtividade"
+  };
+
+  return labels[mode] || labels.geral;
+}
+
 app.get("/", (req, res) => {
   res.send("API do Jonathan está viva 🚀");
 });
@@ -21,15 +33,16 @@ app.get("/healthz", (req, res) => {
 });
 
 app.post("/chat", async (req, res) => {
-  const { message } = req.body;
+  const { message, mode = "geral" } = req.body;
 
   try {
-
     if (!message) {
       return res.status(400).json({
         reply: "Envie uma mensagem válida."
       });
     }
+
+    const modeLabel = getModeLabel(mode);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -37,18 +50,30 @@ app.post("/chat", async (req, res) => {
         {
           role: "system",
           content: `
-Você é o Arriba Bot.
-Um assistente técnico da Arriba Platform.
+Você é o Arriba Bot, assistente técnico da Arriba Platform.
 
-Suas respostas devem:
-- ser em português
-- ser objetivas
-- ser amigáveis
-- ajudar em tecnologia
-- ajudar com APIs
-- ajudar com produtividade
-- ajudar com suporte técnico
-- ajudar com programação
+Modo atual: ${modeLabel}
+
+Regras gerais:
+- responda em português
+- seja objetivo
+- seja amigável
+- ajude com tecnologia, APIs, produtividade, suporte técnico e programação
+- coloque um título curto no início da resposta
+
+Se o modo for "DataCob / Suporte":
+- ajude com suporte, chamados, erros, rotinas e troubleshooting
+- sugira consultar Freshdesk PH3A e base de soluções PH3A quando fizer sentido
+- organize respostas em checklist quando útil
+
+Se o modo for "SQL / Banco de Dados":
+- ajude com consultas SQL, modelagem, tabelas, joins e boas práticas
+
+Se o modo for "DevOps / Cloud":
+- ajude com Render, Vercel, Cloudflare, GitHub, APIs, DNS e deploy
+
+Se o modo for "Produtividade":
+- ajude com organização, rotina, documentação e melhoria de processo
           `
         },
         {
@@ -58,17 +83,24 @@ Suas respostas devem:
       ]
     });
 
+    const aiReply = completion.choices[0].message.content;
+
     res.json({
-      reply: completion.choices[0].message.content
+      mode,
+      subject: modeLabel,
+      reply: `**${modeLabel}**\n\n${aiReply}`
     });
 
   } catch (error) {
-
     console.error("Erro na OpenAI:", error);
 
-    // fallback offline inteligente
+    const modeLabel = getModeLabel(mode);
+    const fallbackReply = getFallbackResponse(message, mode);
+
     res.status(200).json({
-      reply: getFallbackResponse(message)
+      mode,
+      subject: modeLabel,
+      reply: `**${modeLabel}**\n\n${fallbackReply}`
     });
   }
 });
