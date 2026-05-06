@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
+import { getFallbackResponse } from "./fallback.js";
 
 const app = express();
 
@@ -20,8 +21,9 @@ app.get("/healthz", (req, res) => {
 });
 
 app.post("/chat", async (req, res) => {
+  const { message } = req.body;
+
   try {
-    const { message } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -42,7 +44,11 @@ Suas respostas devem:
 - ser em português
 - ser objetivas
 - ser amigáveis
-- ajudar em tecnologia, APIs, produtividade, suporte e programação
+- ajudar em tecnologia
+- ajudar com APIs
+- ajudar com produtividade
+- ajudar com suporte técnico
+- ajudar com programação
           `
         },
         {
@@ -57,10 +63,12 @@ Suas respostas devem:
     });
 
   } catch (error) {
+
     console.error("Erro na OpenAI:", error);
 
-    res.status(500).json({
-      reply: "Tive um problema ao processar sua mensagem."
+    // fallback offline inteligente
+    res.status(200).json({
+      reply: getFallbackResponse(message)
     });
   }
 });
