@@ -1,13 +1,20 @@
 import express from "express";
 import {
   addPrivateNote,
+  getAgent,
+  getAssociatedTickets,
+  getCompany,
+  getContact,
+  getGroup,
   getTicket,
   getTicketConversations,
   isFreshdeskConfigured,
+  listRequesterTickets,
+  searchTicketsBySubject,
   updateTicket
 } from "../modules/freshdesk/freshdeskClient.js";
 import { analyzeSupportTicket } from "../modules/freshdesk/supportAnalyzer.js";
-import { buildInternalNoteHtml } from "../modules/freshdesk/templates.js";
+import { buildInternalNoteHtml, DEFAULT_STATUS_LABELS, formatTicketListForUi } from "../modules/freshdesk/templates.js";
 
 function getTicketIdFromWebhook(body = {}) {
   return body.ticket_id || body.ticketId || body.id || body.ticket?.id || body.display_id || body.ticket?.display_id;
@@ -26,11 +33,48 @@ function checkWebhookSecret(req, res) {
   return true;
 }
 
-async function fetchAndAnalyzeTicket(ticketId) {
+function isOpenTicket(ticket = {}) {
+  const rawStatus = ticket.status;
+  const status = DEFAULT_STATUS_LABELS[rawStatus] || String(rawStatus || "").toLowerCase();
+  return !["Resolvido", "Fechado", "resolved", "closed", "4", "5"].includes(status);
+}
+
+async function buildTicketContext(ticketId) {
   const ticket = await getTicket(ticketId);
-  const conversations = await getTicketConversations(ticketId);
-  const analysis = await analyzeSupportTicket(ticket, conversations);
-  return { ticket, conversations, analysis };
+  const [conversations, associatedTickets, contact, company, group, agent] = await Promise.all([
+    getTicketConversations(ticketId),
+    getAssociatedTickets(ticketId),
+    getContact(ticket.requester_id),
+    getCompany(ticket.company_id),
+    getGroup(ticket.group_id),
+    getAgent(ticket.responder_id)
+  ]);
+
+  const requesterTickets = await listRequesterTickets(ticket.requester_id, 30);
+  const requesterOpenTickets = requesterTickets.filter(isOpenTicket);
+
+  const context = {
+    contact,
+    company,
+    group,
+    agent,
+    associatedTickets,
+    requesterTickets,
+    requesterOpenTickets,
+    ui: {
+      associatedTickets: formatTicketListForUi(associatedTickets),
+      requesterOpenTickets: formatTicketListForUi(requesterOpenTickets),
+      requesterTickets: formatTicketListForUi(requesterTickets)
+    }
+  };
+
+  return { ticket, conversations, context };
+}
+
+async function fetchAndAnalyzeTicket(ticketId) {
+  const { ticket, conversations, context } = await buildTicketContext(ticketId);
+  const analysis = await analyzeSupportTicket(ticket, conversations, context);
+  return { ticket, conversations, context, analysis };
 }
 
 export function createFreshdeskRouter() {
@@ -45,11 +89,39 @@ export function createFreshdeskRouter() {
     });
   });
 
+  router.get("/freshdesk/tickets/search", async (req, res) => {
+    try {
+      const term = String(req.query.term || req.query.q || "").trim();
+      if (!term) return res.status(400).json({ error: "Informe o termo de busca em ?term=." });
+
+      const tickets = await searchTicketsBySubject(term, Number(req.query.limit) || 10);
+      res.json({ term, tickets, ui: { tickets: formatTicketListForUi(tickets) } });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+        code: error.code,
+        details: error.details
+      });
+    }
+  });
+
   router.get("/freshdesk/tickets/:ticketId", async (req, res) => {
     try {
-      const ticket = await getTicket(req.params.ticketId);
-      const conversations = await getTicketConversations(req.params.ticketId);
-      res.json({ ticket, conversations });
+      const { ticket, conversations, context } = await buildTicketContext(req.params.ticketId);
+      res.json({ ticket, conversations, context });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message,
+        code: error.code,
+        details: error.details
+      });
+    }
+  });
+
+  router.get("/freshdesk/tickets/:ticketId/context", async (req, res) => {
+    try {
+      const { ticket, conversations, context } = await buildTicketContext(req.params.ticketId);
+      res.json({ ticket, conversations, context });
     } catch (error) {
       res.status(error.statusCode || 500).json({
         error: error.message,
@@ -135,8 +207,9 @@ export function createFreshdeskRouter() {
     try {
       const ticket = req.body?.ticket || req.body || {};
       const conversations = req.body?.conversations || [];
-      const analysis = await analyzeSupportTicket(ticket, conversations);
-      res.json({ ticket, conversations, analysis });
+      const context = req.body?.context || {};
+      const analysis = await analyzeSupportTicket(ticket, conversations, context);
+      res.json({ ticket, conversations, context, analysis });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

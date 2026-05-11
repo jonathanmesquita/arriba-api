@@ -44,6 +44,16 @@ function buildHeaders(apiKey, hasBody = false) {
   return headers;
 }
 
+function toQueryString(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    query.set(key, value);
+  });
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
 async function parseFreshdeskResponse(response) {
   const text = await response.text();
 
@@ -85,18 +95,85 @@ export async function freshdeskRequest(path, options = {}) {
   return payload;
 }
 
+async function optionalFreshdeskRequest(path, fallbackValue) {
+  try {
+    return await freshdeskRequest(path);
+  } catch (error) {
+    console.warn(`Freshdesk opcional falhou em ${path}:`, error.message);
+    return fallbackValue;
+  }
+}
+
 export async function getTicket(ticketId) {
   return freshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}?include=requester,stats`);
 }
 
 export async function getTicketConversations(ticketId) {
-  try {
-    const conversations = await freshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}/conversations`);
-    return Array.isArray(conversations) ? conversations : [];
-  } catch (error) {
-    console.warn("Não foi possível buscar conversas do ticket:", error.message);
-    return [];
+  const conversations = await optionalFreshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}/conversations`, []);
+  return Array.isArray(conversations) ? conversations : [];
+}
+
+export async function getAssociatedTickets(ticketId) {
+  const associated = await optionalFreshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}/associated_tickets`, []);
+  if (Array.isArray(associated)) return associated;
+  if (Array.isArray(associated?.tickets)) return associated.tickets;
+  return [];
+}
+
+export async function getContact(contactId) {
+  if (!contactId) return null;
+  return optionalFreshdeskRequest(`/contacts/${encodeURIComponent(contactId)}`, null);
+}
+
+export async function getCompany(companyId) {
+  if (!companyId) return null;
+  return optionalFreshdeskRequest(`/companies/${encodeURIComponent(companyId)}`, null);
+}
+
+export async function getAgent(agentId) {
+  if (!agentId) return null;
+  return optionalFreshdeskRequest(`/agents/${encodeURIComponent(agentId)}`, null);
+}
+
+export async function getGroup(groupId) {
+  if (!groupId) return null;
+  return optionalFreshdeskRequest(`/groups/${encodeURIComponent(groupId)}`, null);
+}
+
+export async function listRequesterTickets(requesterId, limit = 30) {
+  if (!requesterId) return [];
+  const params = toQueryString({
+    requester_id: requesterId,
+    include: "stats",
+    order_by: "created_at",
+    order_type: "desc",
+    per_page: Math.min(Math.max(Number(limit) || 30, 1), 100)
+  });
+  const tickets = await optionalFreshdeskRequest(`/tickets${params}`, []);
+  return Array.isArray(tickets) ? tickets : [];
+}
+
+function escapeFreshdeskSearchTerm(term = "") {
+  return String(term).replace(/'/g, "\\'").trim();
+}
+
+export async function searchTicketsBySubject(term, limit = 10) {
+  const safeTerm = escapeFreshdeskSearchTerm(term);
+  if (!safeTerm) return [];
+
+  const queries = [
+    `subject:'${safeTerm}'`,
+    `description:'${safeTerm}'`
+  ];
+
+  for (const query of queries) {
+    const encoded = encodeURIComponent(`"${query}"`);
+    const result = await optionalFreshdeskRequest(`/search/tickets?query=${encoded}`, null);
+    const tickets = Array.isArray(result?.results) ? result.results : Array.isArray(result) ? result : [];
+    if (tickets.length) return tickets.slice(0, limit);
   }
+
+  return [];
 }
 
 export async function addPrivateNote(ticketId, htmlBody) {

@@ -7,6 +7,93 @@ export const FRESHDESK_SCENARIOS = {
   delivery: "Mover para Delivery"
 };
 
+export const FRESHDESK_ALLOWED_PRIORITIES = ["Baixa", "Média", "Alta", "Urgente"];
+
+export const FRESHDESK_ALLOWED_STATUSES = [
+  "Aberto",
+  "Pendente",
+  "Resolvido",
+  "Fechado",
+  "Aguardando Aprovação",
+  "Aguardando Cliente",
+  "Análise",
+  "Desenvolvendo",
+  "Homologado",
+  "Rejeitado",
+  "Em Backlog"
+];
+
+export const FRESHDESK_ALLOWED_TYPES = [
+  "Dúvida",
+  "Elógios",
+  "Enriquecimento",
+  "Exclusão de dados",
+  "Higienização",
+  "Incidente",
+  "Infra/Hardware/Software",
+  "Integração",
+  "Lentidão",
+  "Melhorias",
+  "Migração",
+  "Modelagem",
+  "Notificação de Consumo de PACOTES",
+  "Pesquisa",
+  "Prorrogar Teste",
+  "Prospect",
+  "Recepção de Arquivo",
+  "Reclamação",
+  "Questionário de avaliação",
+  "Relatório",
+  "Requisições de titular",
+  "Reset Senha",
+  "Reunião",
+  "Sugestão",
+  "Token/TAG",
+  "Treinamento",
+  "Versão",
+  "Alteração de Licenças"
+];
+
+export const DEVELOPMENT_QUALIFICATION_TYPES = ["Melhoria", "Customização", "BUG (Erros)", "Não aplicável"];
+
+export const SUPPORT_GROUPS = {
+  "Suporte DataCob": {
+    agents: [
+      "Jonathan Mesquita",
+      "Jonathan Oliveira Mesquita",
+      "Jonathan Oliveira Oliveira Mesquita",
+      "Ariel Fernando Saraiva da Silva",
+      "Milena Miranda de Araujo",
+      "Weslley Squavolin Andrade",
+      "Ana Caroline Amarim de Souza",
+      "Ananias Neto"
+    ]
+  },
+  "Suporte CRM/DataBusca": {
+    agents: []
+  },
+  Comercial: {
+    agents: []
+  },
+  Suporte: {
+    agents: []
+  }
+};
+
+export const DEFAULT_STATUS_LABELS = {
+  2: "Aberto",
+  3: "Pendente",
+  4: "Resolvido",
+  5: "Fechado"
+};
+
+export const DEFAULT_PRIORITY_LABELS = {
+  1: "Baixa",
+  2: "Média",
+  3: "Alta",
+  4: "Urgente"
+};
+
 export function stripHtml(value = "") {
   return String(value)
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -20,23 +107,50 @@ export function stripHtml(value = "") {
     .trim();
 }
 
-export function buildTicketText(ticket, conversations = []) {
+function formatContactFromContext(ticket = {}, context = {}) {
+  const contact = context.contact || ticket.requester || {};
+  const phones = [contact.phone, contact.mobile, contact.work_phone].filter(Boolean);
+  return [
+    `Contato: ${contact.name || ticket.requester?.name || ticket.requester_name || ticket.name || "Não informado"}`,
+    `E-mail: ${contact.email || ticket.requester?.email || ticket.email || ticket.requester_email || "Não informado"}`,
+    `Telefone: ${phones.length ? phones.join(" / ") : "Não informado"}`,
+    `Empresa: ${context.company?.name || ticket.company_name || ticket.company || ticket.company_id || "Não informado"}`
+  ].join("\n");
+}
+
+export function buildTicketText(ticket, conversations = [], context = {}) {
   const conversationText = conversations
-    .slice(-6)
+    .slice(-8)
     .map((item, index) => {
       const author = item.user_id || item.from_email || item.support_email || "origem desconhecida";
       return `Interação ${index + 1} (${author}): ${stripHtml(item.body_text || item.body || "")}`;
     })
     .join("\n\n");
 
+  const openTickets = (context.requesterOpenTickets || [])
+    .slice(0, 8)
+    .map((item) => `#${item.id} - ${item.subject || "Sem assunto"}`)
+    .join("\n");
+
+  const associatedTickets = (context.associatedTickets || [])
+    .slice(0, 8)
+    .map((item) => `#${item.id} - ${item.subject || "Sem assunto"}`)
+    .join("\n");
+
   return [
     `Ticket: #${ticket.id || ticket.ticketId || "manual"}`,
-    `Assunto: ${ticket.subject || ""}`,
-    `Solicitante: ${ticket.requester?.name || ticket.requester_name || ticket.name || ""}`,
-    `E-mail: ${ticket.requester?.email || ticket.email || ticket.requester_email || ""}`,
-    `Empresa: ${ticket.company_id || ticket.company || ""}`,
+    `Assunto: ${ticket.subject || ticket.title || ""}`,
+    formatContactFromContext(ticket, context),
+    `Grupo atual: ${context.group?.name || ticket.group_name || ticket.group_id || "Não informado"}`,
+    `Agente atual: ${context.agent?.contact?.name || context.agent?.name || ticket.responder_name || ticket.agent_name || ticket.responder_id || "Não informado"}`,
+    `Tags: ${(ticket.tags || []).join(", ")}`,
+    `Tipo atual: ${ticket.type || ticket.ticket_type || "Não informado"}`,
+    `Status atual: ${ticket.status || "Não informado"}`,
+    `Prioridade atual: ${ticket.priority || "Não informado"}`,
     `Descrição: ${stripHtml(ticket.description_text || ticket.description || ticket.message || "")}`,
-    conversationText ? `Histórico recente:\n${conversationText}` : ""
+    conversationText ? `Histórico recente:\n${conversationText}` : "",
+    openTickets ? `Tickets abertos do solicitante:\n${openTickets}` : "",
+    associatedTickets ? `Tickets associados:\n${associatedTickets}` : ""
   ]
     .filter(Boolean)
     .join("\n");
@@ -47,44 +161,60 @@ export function buildInternalNoteHtml(analysis) {
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
 
+  const contact = analysis.contactSummary
+    ? `<h3>Contato</h3>
+      <p><strong>Nome:</strong> ${escapeHtml(analysis.contactSummary.name || "Não informado")}</p>
+      <p><strong>E-mail:</strong> ${escapeHtml(analysis.contactSummary.email || "Não informado")}</p>
+      <p><strong>Telefone:</strong> ${escapeHtml(analysis.contactSummary.phone || "Não informado")}</p>
+      <p><strong>Empresa:</strong> ${escapeHtml(analysis.contactSummary.company || "Não informado")}</p>`
+    : "";
+
   const spec = analysis.developmentSpec
     ? `<hr><h3>Especificação sugerida para Desenvolvimento</h3><pre>${escapeHtml(analysis.developmentSpec)}</pre>`
     : "";
 
   return `
     <div>
-      <h2>Analise IA - PH3A Support Copilot</h2>
+      <h2>Análise IA - PH3A Support Copilot</h2>
+      ${contact}
       <p><strong>Produto:</strong> ${escapeHtml(analysis.product || "Não identificado")}</p>
-      <p><strong>Tipo:</strong> ${escapeHtml(analysis.requestType || "Não identificado")}</p>
+      <p><strong>Tipo Freshdesk:</strong> ${escapeHtml(analysis.freshdeskType || analysis.requestType || "Não identificado")}</p>
+      <p><strong>Tipo DEV:</strong> ${escapeHtml(analysis.developmentType || "Não aplicável")}</p>
       <p><strong>Prioridade sugerida:</strong> ${escapeHtml(analysis.priority || "Não identificada")}</p>
-      <p><strong>Cenario recomendado:</strong> ${escapeHtml(analysis.recommendedScenario || "Revisão manual")}</p>
-      <p><strong>Confianca:</strong> ${Math.round((analysis.confidence || 0) * 100)}%</p>
+      <p><strong>Status sugerido:</strong> ${escapeHtml(analysis.statusSuggestion || "Revisar")}</p>
+      <p><strong>Cenário recomendado:</strong> ${escapeHtml(analysis.recommendedScenario || "Revisão manual")}</p>
+      <p><strong>Grupo recomendado:</strong> ${escapeHtml(analysis.recommendedGroup || "Revisar")}</p>
+      <p><strong>Confiança:</strong> ${Math.round((analysis.confidence || 0) * 100)}%</p>
       <h3>Resumo</h3>
       <p>${escapeHtml(analysis.summary || "Sem resumo gerado.")}</p>
       <h3>Resposta sugerida</h3>
       <p>${escapeHtml(analysis.suggestedReply || "Sem resposta sugerida.")}</p>
-      <h3>Checklist de evidencias</h3>
+      <h3>Checklist de evidências</h3>
       <ul>${checklist}</ul>
       ${spec}
-      <p><em>Observacao: analise gerada por IA/fallback local. Revisar antes de responder ou executar cenario.</em></p>
+      <p><em>Observação: análise gerada por IA/fallback local. Revisar antes de responder ou executar cenário.</em></p>
     </div>
   `;
 }
 
-export function buildDevelopmentSpec(analysis, ticket = {}) {
-  const clientName = ticket.requester?.name || ticket.requester_name || ticket.name || "<NOME DO CLIENTE>";
-  const analystName = ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
+export function buildDevelopmentSpec(analysis, ticket = {}, context = {}) {
+  const contact = analysis.contactSummary || {};
+  const companyName = context.company?.name || contact.company || ticket.company_name || ticket.company || "<NOME DO CLIENTE>";
+  const clientId = context.company?.custom_fields?.cliente_id || ticket.custom_fields?.cliente || ticket.company_id || ticket.customerId || "<ID_CLIENTE>";
+  const analystName = context.agent?.contact?.name || context.agent?.name || ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
   const ticketId = ticket.id || ticket.ticketId || "<ID_TICKET>";
+  const devType = analysis.developmentType && analysis.developmentType !== "Não aplicável" ? analysis.developmentType : "BUG (Erros) | Melhoria | Customização";
 
   return `------------| Especificação de Requisito PARA DESENVOLVIMENTO |------------
 
-Cliente: ${clientName}
+Cliente: ${clientId} - ${companyName}
 Versão do cliente:
 Versão PH3A:
 
 Analista Responsável: ${analystName}
 Ticket Freshdesk: #${ticketId}
 Produto: ${analysis.product || "Não identificado"}
+Tipo DEV: ${devType}
 Prioridade sugerida: ${analysis.priority || "Revisar"}
 
 ---------------------------------------
@@ -108,6 +238,17 @@ ${(analysis.acceptanceCriteria || [
 Anexo:
 ${(analysis.evidenceNeeded || analysis.checklist || ["Prints, arquivos, logs e exemplos citados no chamado."]).map((item) => `- ${item}`).join("\n")}
 `;
+}
+
+export function formatTicketListForUi(tickets = []) {
+  return tickets.map((ticket) => ({
+    id: ticket.id,
+    subject: ticket.subject || "Sem assunto",
+    status: DEFAULT_STATUS_LABELS[ticket.status] || ticket.status || "Não informado",
+    priority: DEFAULT_PRIORITY_LABELS[ticket.priority] || ticket.priority || "Não informado",
+    type: ticket.type || "Não informado",
+    updatedAt: ticket.updated_at || ticket.created_at || ""
+  }));
 }
 
 function escapeHtml(value = "") {
