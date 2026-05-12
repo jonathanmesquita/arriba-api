@@ -1,4 +1,6 @@
 const DEFAULT_PASSWORD = "X";
+const DEFAULT_PAGE_SIZE = 30;
+const CLOSED_STATUS_IDS = new Set([4, 5]);
 
 function normalizeDomain(domain = "") {
   return domain
@@ -44,9 +46,18 @@ function buildHeaders(apiKey, hasBody = false) {
   return headers;
 }
 
+function buildQuery(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    query.set(key, String(value));
+  });
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
 async function parseFreshdeskResponse(response) {
   const text = await response.text();
-
   if (!text) return null;
 
   try {
@@ -77,6 +88,7 @@ export async function freshdeskRequest(path, options = {}) {
     error.statusCode = response.status;
     error.code = "FRESHDESK_API_ERROR";
     error.details = payload;
+    error.path = path;
     throw error;
   }
 
@@ -87,9 +99,58 @@ async function safeFreshdesk(path, fallback = null) {
   try {
     return await freshdeskRequest(path);
   } catch (error) {
-    console.warn(`Freshdesk opcional falhou em ${path}:`, error.message);
+    console.warn(`Freshdesk opcional falhou em ${path}:`, error.message, error.details || "");
     return fallback;
   }
+}
+
+function dedupeTickets(tickets = []) {
+  const map = new Map();
+  tickets.filter(Boolean).forEach((ticket) => {
+    const key = String(ticket.id || ticket.display_id || ticket.ticket_id || JSON.stringify(ticket));
+    if (!map.has(key)) map.set(key, ticket);
+  });
+  return [...map.values()];
+}
+
+function normalizeStatusName(ticket = {}) {
+  return String(ticket.status_name || ticket.status_label || ticket.status || "").toLowerCase();
+}
+
+function isOpenTicket(ticket = {}) {
+  const status = Number(ticket.status);
+  if (CLOSED_STATUS_IDS.has(status)) return false;
+  const name = normalizeStatusName(ticket);
+  if (/resolvido|resolved|fechado|closed|encerrado|deleted|spam/.test(name)) return false;
+  return true;
+}
+
+function sortTicketsByDate(tickets = []) {
+  return [...tickets].sort((a, b) => {
+    const dateA = new Date(a.updated_at || a.created_at || 0).getTime();
+    const dateB = new Date(b.updated_at || b.created_at || 0).getTime();
+    return dateB - dateA;
+  });
+}
+
+async function listTicketsPage(params = {}) {
+  const payload = await safeFreshdesk(`/tickets${buildQuery(params)}`, []);
+  return Array.isArray(payload) ? payload : [];
+}
+
+export async function listTickets(params = {}, options = {}) {
+  const perPage = Math.min(Number(options.perPage || DEFAULT_PAGE_SIZE), 100);
+  const maxPages = Math.max(Number(options.maxPages || 3), 1);
+  const collected = [];
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const current = await listTicketsPage({ ...params, per_page: perPage, page });
+    if (!current.length) break;
+    collected.push(...current);
+    if (current.length < perPage) break;
+  }
+
+  return dedupeTickets(collected);
 }
 
 export async function getTicket(ticketId) {
@@ -128,48 +189,106 @@ export async function getGroupAgents(groupId) {
 }
 
 export async function getAssociatedTickets(ticketId) {
-  const associated = await safeFreshdesk(`/tickets/${encodeURIComponent(ticketId)}/associated_tickets`, []);
-  if (Array.isArray(associated)) return associated;
-  if (Array.isArray(associated?.tickets)) return associated.tickets;
+  const candidates = [
+    `/tickets/${encodeURIComponent(ticketId)}/associated_tickets`,
+    `/tickets/${encodeURIComponent(ticketId)}/associated`
+  ];
+
+  for (const path of candidates) {
+    const associated = await safeFreshdesk(path, null);
+    if (!associated) continue;
+    if (Array.isArray(associated)) return associated;
+    if (Array.isArray(associated?.tickets)) return associated.tickets;
+    if (Array.isArray(associated?.associated_tickets)) return associated.associated_tickets;
+    if (Array.isArray(associated?.results)) return associated.results;
+  }
+
   return [];
+}
+
+function sanitizeSearchTerm(term = "") {
+  return String(term || "")
+    .trim()
+    .replace(/["\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+}
+
+async function searchTicketsByQuery(rawQuery, maxResults = 10) {
+  if (!rawQuery) return [];
+  const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(`\"${rawQuery}\"`)}`, null);
+  const tickets = Array.isArray(result?.results) ? result.results : [];
+  return tickets.slice(0, maxResults);
 }
 
 export async function searchTickets(term, maxResults = 10) {
-  const cleanTerm = String(term || "").trim();
+  const cleanTerm = sanitizeSearchTerm(term);
   if (!cleanTerm) return [];
 
-  const safeTerm = cleanTerm.replace(/"/g, "\\\"");
   const queries = [
-    `\"subject:'${safeTerm}'\"`,
-    `\"description:'${safeTerm}'\"`,
-    `\"requester_email:'${safeTerm}'\"`
+    `subject:'${cleanTerm}'`,
+    `description:'${cleanTerm}'`,
+    `requester_email:'${cleanTerm}'`,
+    `company_name:'${cleanTerm}'`
   ];
 
+  const collected = [];
   for (const query of queries) {
-    const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
-    const tickets = Array.isArray(result?.results) ? result.results : [];
-    if (tickets.length) return tickets.slice(0, maxResults);
+    const tickets = await searchTicketsByQuery(query, maxResults);
+    collected.push(...tickets);
+    if (dedupeTickets(collected).length >= maxResults) break;
   }
 
-  return [];
+  return sortTicketsByDate(dedupeTickets(collected)).slice(0, maxResults);
 }
 
-export async function getRequesterOpenTickets(requesterId, requesterEmail = "", maxResults = 10) {
+async function searchTicketsByRequesterFallback(requesterId, requesterEmail = "", maxResults = 30) {
   const queries = [];
-  if (requesterId) queries.push(`"requester_id:${requesterId}"`);
-  if (requesterEmail) {
-    const safeEmail = String(requesterEmail).replace(/"/g, "\"");
-    queries.push(`"requester_email:'${safeEmail}'"`);
-  }
+  if (requesterId) queries.push(`requester_id:${requesterId}`);
+  if (requesterEmail) queries.push(`requester_email:'${sanitizeSearchTerm(requesterEmail)}'`);
 
+  const collected = [];
   for (const query of queries) {
-    const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
-    const tickets = Array.isArray(result?.results) ? result.results : [];
-    const openTickets = tickets.filter((ticket) => ![4, 5].includes(Number(ticket.status))).slice(0, maxResults);
-    if (openTickets.length) return openTickets;
+    const tickets = await searchTicketsByQuery(query, maxResults);
+    collected.push(...tickets);
   }
 
-  return [];
+  return dedupeTickets(collected);
+}
+
+export async function getRequesterTickets(requesterId, requesterEmail = "", options = {}) {
+  const maxResults = Number(options.maxResults || 50);
+  const collected = [];
+
+  // Preferir /tickets?requester_id=... porque a busca textual do Freshdesk pode variar por plano/configuracao.
+  if (requesterId) {
+    const byRequester = await listTickets({ requester_id: requesterId, include: "requester,stats" }, { perPage: 100, maxPages: 3 });
+    collected.push(...byRequester);
+  }
+
+  if (requesterEmail) {
+    const byEmail = await listTickets({ email: requesterEmail, include: "requester,stats" }, { perPage: 100, maxPages: 3 });
+    collected.push(...byEmail);
+  }
+
+  // Fallback por search/tickets, caso /tickets com requester_id/email nao retorne em algum ambiente.
+  if (!collected.length) {
+    const fallback = await searchTicketsByRequesterFallback(requesterId, requesterEmail, maxResults);
+    collected.push(...fallback);
+  }
+
+  return sortTicketsByDate(dedupeTickets(collected)).slice(0, maxResults);
+}
+
+export async function getRequesterOpenTickets(requesterId, requesterEmail = "", maxResults = 30) {
+  const tickets = await getRequesterTickets(requesterId, requesterEmail, { maxResults: Math.max(maxResults, 50) });
+  return tickets.filter(isOpenTicket).slice(0, maxResults);
+}
+
+export async function getCompanyOpenTickets(companyId, maxResults = 30) {
+  if (!companyId) return [];
+  const tickets = await listTickets({ company_id: companyId, include: "requester,stats" }, { perPage: 100, maxPages: 3 });
+  return sortTicketsByDate(dedupeTickets(tickets).filter(isOpenTicket)).slice(0, maxResults);
 }
 
 export async function getRecurrenceCandidates(ticket, maxResults = 10) {
@@ -193,7 +312,11 @@ export async function getTicketContext(ticketId) {
   const agent = await getAgent(ticket.responder_id);
   const groupAgents = await getGroupAgents(ticket.group_id);
   const associatedTickets = await getAssociatedTickets(ticketId);
-  const requesterOpenTickets = await getRequesterOpenTickets(ticket.requester_id || contact?.id, contact?.email || ticket.requester?.email);
+  const requesterId = ticket.requester_id || contact?.id || ticket.requester?.id;
+  const requesterEmail = contact?.email || ticket.requester?.email || ticket.requester_email || ticket.email;
+  const requesterAllTickets = await getRequesterTickets(requesterId, requesterEmail, { maxResults: 50 });
+  const requesterOpenTickets = requesterAllTickets.filter(isOpenTicket).slice(0, 30);
+  const companyOpenTickets = await getCompanyOpenTickets(ticket.company_id || contact?.company_id, 30);
   const recurrenceCandidates = await getRecurrenceCandidates(ticket);
 
   return {
@@ -206,8 +329,18 @@ export async function getTicketContext(ticketId) {
       agent,
       groupAgents,
       associatedTickets,
+      requesterAllTickets,
       requesterOpenTickets,
-      recurrenceCandidates
+      companyOpenTickets,
+      recurrenceCandidates,
+      requesterTicketSummary: {
+        requesterId: requesterId || null,
+        requesterEmail: requesterEmail || null,
+        totalFound: requesterAllTickets.length,
+        openFound: requesterOpenTickets.length,
+        companyOpenFound: companyOpenTickets.length,
+        strategy: requesterAllTickets.length ? "tickets_endpoint" : "empty"
+      }
     }
   };
 }
@@ -237,3 +370,10 @@ export function isFreshdeskConfigured() {
     return false;
   }
 }
+
+export const __freshdeskInternals = {
+  isOpenTicket,
+  dedupeTickets,
+  sanitizeSearchTerm,
+  buildQuery
+};

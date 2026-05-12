@@ -4,6 +4,7 @@ import {
   getTicket,
   getTicketContext,
   getTicketConversations,
+  getRequesterTickets,
   isFreshdeskConfigured,
   searchTickets,
   updateTicket
@@ -114,6 +115,19 @@ export function createFreshdeskRouter() {
       const term = req.query.term || req.query.q || "";
       const tickets = await searchTickets(term);
       res.json({ term, tickets });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+
+  router.get("/freshdesk/requesters/:requesterId/tickets", async (req, res) => {
+    try {
+      const requesterId = req.params.requesterId;
+      const email = req.query.email || "";
+      const maxResults = Number(req.query.limit || 50);
+      const tickets = await getRequesterTickets(requesterId, email, { maxResults });
+      res.json({ requesterId, email, total: tickets.length, tickets });
     } catch (error) {
       sendError(res, error);
     }
