@@ -89,30 +89,3 @@ Body JSON sugerido:
 ```
 
 No MVP, mantenha `SUPPORT_COPILOT_AUTO_NOTE=false` e use o endpoint manual de análise. Quando estiver seguro, ative a nota automática.
-
-## v1.3 - Contexto completo do ticket
-
-Novas rotas adicionadas:
-
-```http
-GET  /freshdesk/tickets/:ticketId/context
-GET  /freshdesk/tickets/search?term=texto
-POST /freshdesk/tickets/:ticketId/analyze
-```
-
-A rota `/context` busca o ticket, conversas, contato, empresa, agente, grupo, tickets associados e tickets abertos do solicitante. A tela do Support Copilot usa essa rota para preencher os campos automaticamente quando o usuário informa apenas o número do ticket.
-
-A análise agora considera os valores operacionais usados no Freshdesk:
-
-- Prioridade: Baixa, Média, Alta, Urgente
-- Status sugerido: Aberto, Pendente, Resolvido, Fechado, Aguardando Aprovação, Aguardando Cliente, Análise, Desenvolvendo, Homologado, Rejeitado, Em Backlog
-- Tipo Freshdesk conforme a lista operacional do Suporte
-- Tipo DEV somente: Melhoria, Customização ou BUG (Erros)
-
-Para começar seguro, mantenha:
-
-```env
-SUPPORT_COPILOT_AUTO_NOTE=false
-```
-
-Assim a IA recomenda, mas não grava nota interna automaticamente.

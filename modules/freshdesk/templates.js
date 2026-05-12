@@ -7,91 +7,172 @@ export const FRESHDESK_SCENARIOS = {
   delivery: "Mover para Delivery"
 };
 
-export const FRESHDESK_ALLOWED_PRIORITIES = ["Baixa", "Média", "Alta", "Urgente"];
+export const FRESHDESK_PRIORITIES = ["Baixa", "Media", "Alta", "Urgente"];
+export const DEV_TYPES = ["Melhoria", "Customizacao", "BUG (Erros)"];
 
-export const FRESHDESK_ALLOWED_STATUSES = [
-  "Aberto",
-  "Pendente",
-  "Resolvido",
-  "Fechado",
-  "Aguardando Aprovação",
-  "Aguardando Cliente",
-  "Análise",
-  "Desenvolvendo",
-  "Homologado",
-  "Rejeitado",
-  "Em Backlog"
+export const SUPPORT_DATABOC_AGENTS = [
+  "Jonathan Mesquita",
+  "Jonathan Oliveira Mesquita",
+  "Ariel Fernando Saraiva da Silva",
+  "Milena Miranda de Araujo",
+  "Weslley Squavolin Andrade",
+  "Ana Caroline Amarim de Souza",
+  "Ananias Neto"
 ];
 
-export const FRESHDESK_ALLOWED_TYPES = [
-  "Dúvida",
-  "Elógios",
+export const FRESHDESK_TICKET_TYPES = [
+  "Duvida",
+  "Elogios",
   "Enriquecimento",
-  "Exclusão de dados",
-  "Higienização",
+  "Exclusao de dados",
+  "Higienizacao",
   "Incidente",
   "Infra/Hardware/Software",
-  "Integração",
-  "Lentidão",
+  "Integracao",
+  "Lentidao",
   "Melhorias",
-  "Migração",
+  "Migracao",
   "Modelagem",
-  "Notificação de Consumo de PACOTES",
+  "Notificacao de Consumo de PACOTES",
   "Pesquisa",
   "Prorrogar Teste",
   "Prospect",
-  "Recepção de Arquivo",
-  "Reclamação",
-  "Questionário de avaliação",
-  "Relatório",
-  "Requisições de titular",
+  "Recepcao de Arquivo",
+  "Reclamacao",
+  "Questionario de avaliacao",
+  "Relatorio",
+  "Requisicoes de titular",
   "Reset Senha",
-  "Reunião",
-  "Sugestão",
+  "Reuniao",
+  "Sugestao",
   "Token/TAG",
   "Treinamento",
-  "Versão",
-  "Alteração de Licenças"
+  "Versao",
+  "Alteracao de Licencas"
 ];
 
-export const DEVELOPMENT_QUALIFICATION_TYPES = ["Melhoria", "Customização", "BUG (Erros)", "Não aplicável"];
+export const FRESHDESK_TEMPLATES = {
+  respostaInicial: {
+    title: "Resposta apos abertura do chamado - DATACOB",
+    type: "public_reply",
+    useWhen: ["novo_chamado", "analise_inicial", "sem_evidencias"],
+    body: `Ola {{ticket.requester.firstname}},
 
-export const SUPPORT_GROUPS = {
-  "Suporte DataCob": {
-    agents: [
-      "Jonathan Mesquita",
-      "Jonathan Oliveira Mesquita",
-      "Jonathan Oliveira Oliveira Mesquita",
-      "Ariel Fernando Saraiva da Silva",
-      "Milena Miranda de Araujo",
-      "Weslley Squavolin Andrade",
-      "Ana Caroline Amarim de Souza",
-      "Ananias Neto"
-    ]
+Agradecemos por sua mensagem e queremos informar que ja estamos analisando sua solicitacao.
+
+Em breve, entraremos em contato com voce para fornecer mais informacoes.
+
+Ticket: #{{ticket.id}}
+Portal: {{ticket.url}}
+
+Atenciosamente,
+{{ticket.agent.name}}`
   },
-  "Suporte CRM/DataBusca": {
-    agents: []
+
+  solicitarEvidencias: {
+    title: "Solicitar mais evidencias",
+    type: "public_reply",
+    useWhen: ["erro", "bug", "recepcao_arquivo", "lentidao", "duvida_incompleta"],
+    body: `Ola {{ticket.requester.firstname}},
+
+Para avancarmos com a analise do chamado #{{ticket.id}}, poderia nos encaminhar as seguintes informacoes?
+
+{{ai.checklist}}
+
+Com essas evidencias conseguimos direcionar a analise com mais precisao.
+
+Atenciosamente,
+{{ticket.agent.name}}`
   },
-  Comercial: {
-    agents: []
+
+  encaminharDesenvolvimento: {
+    title: "Chamado encaminhado para Desenvolvimento",
+    type: "public_reply",
+    useWhen: ["bug", "melhoria", "customizacao", "desenvolvimento"],
+    body: `Ola {{ticket.requester.firstname}},
+
+Apos analise inicial do chamado #{{ticket.id}}, identificamos a necessidade de avaliacao tecnica pelo nosso time de Desenvolvimento.
+
+O caso sera encaminhado com as informacoes coletadas ate o momento. Caso sejam necessarias evidencias adicionais, retornaremos por este chamado.
+
+Atenciosamente,
+{{ticket.agent.name}}`
   },
-  Suporte: {
-    agents: []
+
+  direcionamentoComercial: {
+    title: "Direcionamento para Comercial",
+    type: "public_reply",
+    useWhen: ["comercial", "proposta", "licenca", "demo", "prospect"],
+    body: `Ola {{ticket.requester.firstname}},
+
+Recebemos sua solicitacao e identificamos que ela esta relacionada a uma demanda comercial.
+
+Vamos direcionar seu atendimento para a equipe responsavel, que seguira com as proximas orientacoes.
+
+Atenciosamente,
+{{ticket.agent.name}}`
+  },
+
+  aguardandoCliente: {
+    title: "Aguardando retorno do cliente",
+    type: "public_reply",
+    useWhen: ["aguardando_cliente", "pendencia_cliente"],
+    body: `Ola {{ticket.requester.firstname}},
+
+Para continuarmos a analise do chamado #{{ticket.id}}, precisamos do seu retorno com as informacoes solicitadas anteriormente.
+
+Assim que recebermos os dados, daremos sequencia ao atendimento.
+
+Atenciosamente,
+{{ticket.agent.name}}`
+  },
+
+  notaInternaIA: {
+    title: "@Anotacoes - Analise IA Support Copilot",
+    type: "private_note",
+    body: `Analise IA - Support Copilot
+
+Ticket: #{{ticket.id}}
+Assunto: {{ticket.subject}}
+Solicitante: {{ticket.requester.name}} - {{ticket.requester.email}}
+Telefone: {{ticket.requester.phone}}
+Empresa: {{ticket.company.name}}
+Grupo atual: {{ticket.group.name}}
+Agente atual: {{ticket.agent.name}}
+Status atual: {{ticket.status}}
+Prioridade atual: {{ticket.priority}}
+Tags: {{ticket.tags}}
+
+Resumo da solicitacao:
+{{ai.summary}}
+
+Produto identificado:
+{{ai.product}}
+
+Tipo Freshdesk sugerido:
+{{ai.freshdeskType}}
+
+Tipo DEV sugerido:
+{{ai.developmentType}}
+
+Prioridade sugerida:
+{{ai.priority}}
+
+Cenario recomendado:
+{{ai.recommendedScenario}}
+
+Resposta predefinida recomendada:
+{{ai.recommendedTemplateTitle}}
+
+Checklist de evidencias:
+{{ai.checklist}}
+
+Proxima acao sugerida:
+{{ai.nextAction}}
+
+Atencao:
+Esta anotacao foi gerada por IA/fallback local para apoiar a triagem. O analista deve revisar antes de responder, alterar propriedades ou encaminhar o chamado.`
   }
-};
-
-export const DEFAULT_STATUS_LABELS = {
-  2: "Aberto",
-  3: "Pendente",
-  4: "Resolvido",
-  5: "Fechado"
-};
-
-export const DEFAULT_PRIORITY_LABELS = {
-  1: "Baixa",
-  2: "Média",
-  3: "Alta",
-  4: "Urgente"
 };
 
 export function stripHtml(value = "") {
@@ -107,155 +188,237 @@ export function stripHtml(value = "") {
     .trim();
 }
 
-function formatContactFromContext(ticket = {}, context = {}) {
-  const contact = context.contact || ticket.requester || {};
-  const phones = [contact.phone, contact.mobile, contact.work_phone].filter(Boolean);
-  return [
-    `Contato: ${contact.name || ticket.requester?.name || ticket.requester_name || ticket.name || "Não informado"}`,
-    `E-mail: ${contact.email || ticket.requester?.email || ticket.email || ticket.requester_email || "Não informado"}`,
-    `Telefone: ${phones.length ? phones.join(" / ") : "Não informado"}`,
-    `Empresa: ${context.company?.name || ticket.company_name || ticket.company || ticket.company_id || "Não informado"}`
-  ].join("\n");
-}
-
-export function buildTicketText(ticket, conversations = [], context = {}) {
-  const conversationText = conversations
-    .slice(-8)
-    .map((item, index) => {
-      const author = item.user_id || item.from_email || item.support_email || "origem desconhecida";
-      return `Interação ${index + 1} (${author}): ${stripHtml(item.body_text || item.body || "")}`;
-    })
-    .join("\n\n");
-
-  const openTickets = (context.requesterOpenTickets || [])
-    .slice(0, 8)
-    .map((item) => `#${item.id} - ${item.subject || "Sem assunto"}`)
-    .join("\n");
-
-  const associatedTickets = (context.associatedTickets || [])
-    .slice(0, 8)
-    .map((item) => `#${item.id} - ${item.subject || "Sem assunto"}`)
-    .join("\n");
-
-  return [
-    `Ticket: #${ticket.id || ticket.ticketId || "manual"}`,
-    `Assunto: ${ticket.subject || ticket.title || ""}`,
-    formatContactFromContext(ticket, context),
-    `Grupo atual: ${context.group?.name || ticket.group_name || ticket.group_id || "Não informado"}`,
-    `Agente atual: ${context.agent?.contact?.name || context.agent?.name || ticket.responder_name || ticket.agent_name || ticket.responder_id || "Não informado"}`,
-    `Tags: ${(ticket.tags || []).join(", ")}`,
-    `Tipo atual: ${ticket.type || ticket.ticket_type || "Não informado"}`,
-    `Status atual: ${ticket.status || "Não informado"}`,
-    `Prioridade atual: ${ticket.priority || "Não informado"}`,
-    `Descrição: ${stripHtml(ticket.description_text || ticket.description || ticket.message || "")}`,
-    conversationText ? `Histórico recente:\n${conversationText}` : "",
-    openTickets ? `Tickets abertos do solicitante:\n${openTickets}` : "",
-    associatedTickets ? `Tickets associados:\n${associatedTickets}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-export function buildInternalNoteHtml(analysis) {
-  const checklist = (analysis.checklist || [])
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("");
-
-  const contact = analysis.contactSummary
-    ? `<h3>Contato</h3>
-      <p><strong>Nome:</strong> ${escapeHtml(analysis.contactSummary.name || "Não informado")}</p>
-      <p><strong>E-mail:</strong> ${escapeHtml(analysis.contactSummary.email || "Não informado")}</p>
-      <p><strong>Telefone:</strong> ${escapeHtml(analysis.contactSummary.phone || "Não informado")}</p>
-      <p><strong>Empresa:</strong> ${escapeHtml(analysis.contactSummary.company || "Não informado")}</p>`
-    : "";
-
-  const spec = analysis.developmentSpec
-    ? `<hr><h3>Especificação sugerida para Desenvolvimento</h3><pre>${escapeHtml(analysis.developmentSpec)}</pre>`
-    : "";
-
-  return `
-    <div>
-      <h2>Análise IA - PH3A Support Copilot</h2>
-      ${contact}
-      <p><strong>Produto:</strong> ${escapeHtml(analysis.product || "Não identificado")}</p>
-      <p><strong>Tipo Freshdesk:</strong> ${escapeHtml(analysis.freshdeskType || analysis.requestType || "Não identificado")}</p>
-      <p><strong>Tipo DEV:</strong> ${escapeHtml(analysis.developmentType || "Não aplicável")}</p>
-      <p><strong>Prioridade sugerida:</strong> ${escapeHtml(analysis.priority || "Não identificada")}</p>
-      <p><strong>Status sugerido:</strong> ${escapeHtml(analysis.statusSuggestion || "Revisar")}</p>
-      <p><strong>Cenário recomendado:</strong> ${escapeHtml(analysis.recommendedScenario || "Revisão manual")}</p>
-      <p><strong>Grupo recomendado:</strong> ${escapeHtml(analysis.recommendedGroup || "Revisar")}</p>
-      <p><strong>Confiança:</strong> ${Math.round((analysis.confidence || 0) * 100)}%</p>
-      <h3>Resumo</h3>
-      <p>${escapeHtml(analysis.summary || "Sem resumo gerado.")}</p>
-      <h3>Resposta sugerida</h3>
-      <p>${escapeHtml(analysis.suggestedReply || "Sem resposta sugerida.")}</p>
-      <h3>Checklist de evidências</h3>
-      <ul>${checklist}</ul>
-      ${spec}
-      <p><em>Observação: análise gerada por IA/fallback local. Revisar antes de responder ou executar cenário.</em></p>
-    </div>
-  `;
-}
-
-export function buildDevelopmentSpec(analysis, ticket = {}, context = {}) {
-  const contact = analysis.contactSummary || {};
-  const companyName = context.company?.name || contact.company || ticket.company_name || ticket.company || "<NOME DO CLIENTE>";
-  const clientId = context.company?.custom_fields?.cliente_id || ticket.custom_fields?.cliente || ticket.company_id || ticket.customerId || "<ID_CLIENTE>";
-  const analystName = context.agent?.contact?.name || context.agent?.name || ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
-  const ticketId = ticket.id || ticket.ticketId || "<ID_TICKET>";
-  const devType = analysis.developmentType && analysis.developmentType !== "Não aplicável" ? analysis.developmentType : "BUG (Erros) | Melhoria | Customização";
-
-  return `------------| Especificação de Requisito PARA DESENVOLVIMENTO |------------
-
-Cliente: ${clientId} - ${companyName}
-Versão do cliente:
-Versão PH3A:
-
-Analista Responsável: ${analystName}
-Ticket Freshdesk: #${ticketId}
-Produto: ${analysis.product || "Não identificado"}
-Tipo DEV: ${devType}
-Prioridade sugerida: ${analysis.priority || "Revisar"}
-
----------------------------------------
-Rotina:
-${analysis.routine || "<Rotina, tela ou módulo afetado>"}
-
-O cenário atual:
-${analysis.currentScenario || analysis.summary || "<Explicação sobre o problema que deve ser corrigido/melhorado/criado>"}
-
-A necessidade é:
-${analysis.expectedBehavior || "<Explicação de como a rotina deve funcionar/ser entregue>"}
-
-Critério de aceite:
-${(analysis.acceptanceCriteria || [
-  "O comportamento esperado deve ser validado com base no cenário informado.",
-  "O problema não deve ocorrer após a correção/melhoria.",
-  "O suporte deve conseguir reproduzir e homologar o cenário."
-]).map((item) => `- ${item}`).join("\n")}
-
-------------------------------------------------
-Anexo:
-${(analysis.evidenceNeeded || analysis.checklist || ["Prints, arquivos, logs e exemplos citados no chamado."]).map((item) => `- ${item}`).join("\n")}
-`;
-}
-
-export function formatTicketListForUi(tickets = []) {
-  return tickets.map((ticket) => ({
-    id: ticket.id,
-    subject: ticket.subject || "Sem assunto",
-    status: DEFAULT_STATUS_LABELS[ticket.status] || ticket.status || "Não informado",
-    priority: DEFAULT_PRIORITY_LABELS[ticket.priority] || ticket.priority || "Não informado",
-    type: ticket.type || "Não informado",
-    updatedAt: ticket.updated_at || ticket.created_at || ""
-  }));
-}
-
-function escapeHtml(value = "") {
+export function escapeHtml(value = "") {
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+export function textToHtml(value = "") {
+  return escapeHtml(value).replace(/\n/g, "<br>");
+}
+
+export function normalizeText(value = "") {
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function asList(items = []) {
+  if (!Array.isArray(items)) return "- " + String(items || "A confirmar");
+  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- A confirmar";
+}
+
+export function getRequester(ticket = {}, context = {}) {
+  return ticket.requester || context.contact || {};
+}
+
+export function getAgent(ticket = {}, context = {}) {
+  return ticket.agent || context.agent || {};
+}
+
+export function getGroup(ticket = {}, context = {}) {
+  return ticket.group || context.group || {};
+}
+
+export function getCompany(ticket = {}, context = {}) {
+  return ticket.company || context.company || {};
+}
+
+export function getTicketUrl(ticket = {}) {
+  if (ticket.url) return ticket.url;
+  if (ticket.id && process.env.FRESHDESK_DOMAIN) {
+    const domain = String(process.env.FRESHDESK_DOMAIN).replace(/^https?:\/\//, "").replace(/\/$/, "");
+    return `https://${domain}/a/tickets/${ticket.id}`;
+  }
+  return "";
+}
+
+export function buildTemplateVariables(ticket = {}, analysis = {}, context = {}) {
+  const requester = getRequester(ticket, context);
+  const agent = getAgent(ticket, context);
+  const group = getGroup(ticket, context);
+  const company = getCompany(ticket, context);
+  const requesterName = requester.name || ticket.requester_name || ticket.name || "Cliente";
+  const firstName = requester.firstname || requesterName.split(" ")[0] || "Cliente";
+  const checklist = asList(analysis.checklist || analysis.evidenceNeeded || []);
+  const recommendedTemplate = getRecommendedTemplate(analysis);
+
+  return {
+    "ticket.id": ticket.id || ticket.ticketId || "",
+    "ticket.subject": ticket.subject || ticket.title || "",
+    "ticket.description": stripHtml(ticket.description_text || ticket.description || ticket.message || ""),
+    "ticket.url": getTicketUrl(ticket),
+    "ticket.portal_url": ticket.portal_url || getTicketUrl(ticket),
+    "ticket.tags": Array.isArray(ticket.tags) ? ticket.tags.join(", ") : (ticket.tags || ""),
+    "ticket.status": ticket.status_name || ticket.status || "",
+    "ticket.priority": ticket.priority_name || ticket.priority || "",
+    "ticket.ticket_type": ticket.ticket_type || ticket.type || analysis.freshdeskType || "",
+
+    "ticket.requester.firstname": firstName,
+    "ticket.requester.lastname": requester.lastname || "",
+    "ticket.requester.name": requesterName,
+    "ticket.requester.email": requester.email || ticket.email || ticket.requester_email || "",
+    "ticket.requester.phone": requester.phone || requester.mobile || ticket.phone || "",
+    "ticket.requester.mobile": requester.mobile || requester.phone || "",
+
+    "ticket.agent.name": agent.name || ticket.responder_name || ticket.agent_name || "Analista responsavel",
+    "ticket.agent.email": agent.email || "",
+    "ticket.group.name": group.name || ticket.group_name || analysis.recommendedGroup || "Suporte",
+    "ticket.company.name": company.name || company.businessname || ticket.company_name || ticket.company || "Empresa nao informada",
+
+    "ai.summary": analysis.summary || "Resumo nao gerado.",
+    "ai.product": analysis.product || "Nao identificado",
+    "ai.freshdeskType": analysis.freshdeskType || analysis.requestType || "Triagem",
+    "ai.developmentType": analysis.developmentType || "Nao indicado",
+    "ai.priority": analysis.priority || "Baixa",
+    "ai.recommendedScenario": analysis.recommendedScenario || "Revisao manual pelo Suporte",
+    "ai.recommendedTemplateTitle": recommendedTemplate.title,
+    "ai.checklist": checklist,
+    "ai.nextAction": analysis.nextAction || "Revisar a analise, confirmar evidencias e responder o cliente."
+  };
+}
+
+export function renderTemplate(templateKey, ticket = {}, analysis = {}, context = {}) {
+  const template = FRESHDESK_TEMPLATES[templateKey] || FRESHDESK_TEMPLATES.respostaInicial;
+  const vars = buildTemplateVariables(ticket, analysis, context);
+  const body = template.body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, key) => {
+    const value = vars[key.trim()];
+    return value === undefined || value === null || value === "" ? "-" : String(value);
+  });
+
+  return {
+    key: templateKey,
+    title: template.title,
+    type: template.type,
+    body
+  };
+}
+
+export function getRecommendedTemplate(analysis = {}) {
+  const text = normalizeText([
+    analysis.product,
+    analysis.requestType,
+    analysis.freshdeskType,
+    analysis.recommendedScenario,
+    analysis.summary,
+    analysis.currentScenario,
+    analysis.nextAction
+  ].join(" "));
+
+  if (/comercial|prospect|proposta|orcamento|licenca|contratacao|demo|teste/.test(text)) {
+    return { key: "direcionamentoComercial", title: FRESHDESK_TEMPLATES.direcionamentoComercial.title };
+  }
+
+  if (/desenvolvimento|bug|erro|melhoria|customizacao|feature|corrigir|corrigido/.test(text) || analysis.needsDevelopmentSpec) {
+    return { key: "encaminharDesenvolvimento", title: FRESHDESK_TEMPLATES.encaminharDesenvolvimento.title };
+  }
+
+  if (/aguardando cliente|pendencia|retorno do cliente/.test(text)) {
+    return { key: "aguardandoCliente", title: FRESHDESK_TEMPLATES.aguardandoCliente.title };
+  }
+
+  if (/evidencia|print|arquivo|passo a passo|erro|falha|lentidao|recepcao/.test(text)) {
+    return { key: "solicitarEvidencias", title: FRESHDESK_TEMPLATES.solicitarEvidencias.title };
+  }
+
+  return { key: "respostaInicial", title: FRESHDESK_TEMPLATES.respostaInicial.title };
+}
+
+export function renderRecommendedTemplates(ticket = {}, analysis = {}, context = {}) {
+  const recommended = getRecommendedTemplate(analysis);
+  return {
+    recommended,
+    customerReply: renderTemplate(recommended.key, ticket, analysis, context),
+    internalNote: renderTemplate("notaInternaIA", ticket, analysis, context)
+  };
+}
+
+export function buildTicketText(ticket, conversations = [], context = {}) {
+  const requester = getRequester(ticket, context);
+  const company = getCompany(ticket, context);
+  const conversationText = conversations
+    .slice(-8)
+    .map((item, index) => {
+      const author = item.user_id || item.from_email || item.support_email || "origem desconhecida";
+      return `Interacao ${index + 1} (${author}): ${stripHtml(item.body_text || item.body || "")}`;
+    })
+    .join("\n\n");
+
+  return [
+    `Ticket: #${ticket.id || ticket.ticketId || "manual"}`,
+    `Assunto: ${ticket.subject || ticket.title || ""}`,
+    `Solicitante: ${requester.name || ticket.requester_name || ticket.name || ""}`,
+    `E-mail: ${requester.email || ticket.email || ticket.requester_email || ""}`,
+    `Telefone: ${requester.phone || requester.mobile || ticket.phone || ""}`,
+    `Empresa: ${company.name || company.businessname || ticket.company_id || ticket.company || ""}`,
+    `Grupo: ${context.group?.name || ticket.group_name || ""}`,
+    `Agente: ${context.agent?.name || ticket.responder_name || ticket.agent_name || ""}`,
+    `Status: ${ticket.status || ""}`,
+    `Prioridade: ${ticket.priority || ""}`,
+    `Tags: ${Array.isArray(ticket.tags) ? ticket.tags.join(", ") : (ticket.tags || "")}`,
+    `Descricao: ${stripHtml(ticket.description_text || ticket.description || ticket.message || "")}`,
+    conversationText ? `Historico recente:\n${conversationText}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function buildInternalNoteHtml(analysis, ticket = {}, context = {}) {
+  const note = renderTemplate("notaInternaIA", ticket, analysis, context);
+  const spec = analysis.developmentSpec
+    ? `\n\n------------------------------\nESPECIFICACAO SUGERIDA PARA DESENVOLVIMENTO\n------------------------------\n${analysis.developmentSpec}`
+    : "";
+  return textToHtml(`${note.body}${spec}`);
+}
+
+export function buildDevelopmentSpec(analysis, ticket = {}, context = {}) {
+  const requester = getRequester(ticket, context);
+  const company = getCompany(ticket, context);
+  const agent = getAgent(ticket, context);
+  const clientName = company.name || company.businessname || ticket.company_name || requester.name || ticket.requester_name || ticket.name || "<NOME DO CLIENTE>";
+  const clientId = ticket.company_id || ticket.customerId || "";
+  const analystName = agent.name || ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
+  const ticketId = ticket.id || ticket.ticketId || "<ID_TICKET>";
+  const devType = analysis.developmentType || "BUG (Erros)";
+
+  return `------------| Especificacao de Requisito PARA DESENVOLVIMENTO |------------
+
+Cliente: ${clientId ? clientId + " - " : ""}${clientName}
+Versao do cliente:
+Versao PH3A:
+
+Analista Responsavel: ${analystName}
+Ticket Freshdesk: #${ticketId}
+Produto: ${analysis.product || "Nao identificado"}
+Tipo DEV: ${devType}
+Prioridade sugerida: ${analysis.priority || "Revisar"}
+
+---------------------------------------
+Rotina:
+${analysis.routine || "<Rotina, tela ou modulo afetado>"}
+
+O cenario atual:
+${analysis.currentScenario || analysis.summary || "<Explicacao sobre o problema que deve ser corrigido/melhorado/criado>"}
+
+A necessidade e:
+${analysis.expectedBehavior || "<Explicacao de como a rotina deve funcionar/ser entregue>"}
+
+Criterio de aceite:
+${(analysis.acceptanceCriteria || [
+  "O comportamento esperado deve ser validado com base no cenario informado.",
+  "O problema nao deve ocorrer apos a correcao/melhoria.",
+  "O suporte deve conseguir reproduzir e homologar o cenario."
+]).map((item) => `- ${item}`).join("\n")}
+
+------------------------------------------------
+Anexo:
+${(analysis.evidenceNeeded || analysis.checklist || ["Prints, arquivos, logs e exemplos citados no chamado."]).map((item) => `- ${item}`).join("\n")}
+`;
 }

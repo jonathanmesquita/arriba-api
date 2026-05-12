@@ -1,12 +1,11 @@
 import OpenAI from "openai";
 import {
-  FRESHDESK_ALLOWED_PRIORITIES,
-  FRESHDESK_ALLOWED_STATUSES,
-  FRESHDESK_ALLOWED_TYPES,
-  DEVELOPMENT_QUALIFICATION_TYPES,
-  SUPPORT_GROUPS,
   buildDevelopmentSpec,
-  buildTicketText
+  buildTicketText,
+  FRESHDESK_TICKET_TYPES,
+  getRecommendedTemplate,
+  normalizeText,
+  renderRecommendedTemplates
 } from "./templates.js";
 
 function hasOpenAI() {
@@ -18,201 +17,136 @@ function createOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-function normalizeText(value = "") {
-  return String(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
 function inferProduct(text) {
-  if (/databusca|data busca|crm\/databusca|higienizacao|higienização|enriquecimento|pesquisa|pacotes/.test(text)) return "DataBusca";
-  if (/datacob|data cob|cobranca|cobrança|renegociacao|renegociação|negociacao|negociação|parcela|parcelamento|mailing|recepcao|recepção|contrato|boleto|baixa|cobran/.test(text)) return "DataCob";
-  if (/comercial|proposta|contratacao|contratação|orcamento|orçamento|valor|preco|preço|licenca|licença|prospect|teste|venda|demo/.test(text)) return "Comercial";
-  if (/financeiro|boleto ph3a|nota fiscal|pagamento|fatura/.test(text)) return "Financeiro";
-  return "Não identificado";
+  if (/databusca|data busca|crm\/databusca/.test(text)) return "DataBusca";
+  if (/datacob|data cob|cobranca|renegociacao|negociacao|parcela|parcelamento|mailing|recepcao|contrato|boleto/.test(text)) return "DataCob";
+  if (/comercial|proposta|contratacao|valor|orcamento|licenca|demo|prospect/.test(text)) return "Comercial";
+  return "Nao identificado";
 }
 
 function inferFreshdeskType(text) {
-  if (/elogio|parabens|parabéns/.test(text)) return "Elógios";
-  if (/exclusao de dados|exclusão de dados|lgpd|titular/.test(text)) return "Exclusão de dados";
-  if (/enriquecimento/.test(text)) return "Enriquecimento";
-  if (/higienizacao|higienização/.test(text)) return "Higienização";
-  if (/integracao|integração|api|webhook/.test(text)) return "Integração";
-  if (/lentidao|lentidão|lento|performance/.test(text)) return "Lentidão";
-  if (/migracao|migração/.test(text)) return "Migração";
-  if (/modelagem/.test(text)) return "Modelagem";
-  if (/pacote|consumo/.test(text)) return "Notificação de Consumo de PACOTES";
-  if (/prospect|comercial|proposta|orcamento|orçamento|contratar|contratacao|contratação|venda|licenca|licença|teste/.test(text)) return "Prospect";
-  if (/recepcao|recepção|importacao|importação|layout|csv|arquivo/.test(text)) return "Recepção de Arquivo";
-  if (/reclamacao|reclamação|insatisfeito|problema recorrente/.test(text)) return "Reclamação";
-  if (/relatorio|relatório|extracao|extração/.test(text)) return "Relatório";
-  if (/senha|reset/.test(text)) return "Reset Senha";
-  if (/reuniao|reunião|treinamento/.test(text)) return /treinamento/.test(text) ? "Treinamento" : "Reunião";
-  if (/tag|token/.test(text)) return "Token/TAG";
-  if (/versao|versão|release/.test(text)) return "Versão";
-  if (/hardware|software|infra|servidor|vpn/.test(text)) return "Infra/Hardware/Software";
-  if (/melhoria|sugestao|sugestão|nova funcionalidade|feature/.test(text)) return "Melhorias";
-  if (/erro|falha|bug|exception|nao funciona|não funciona|travado|parado|incidente/.test(text)) return "Incidente";
-  return "Dúvida";
+  if (/comercial|proposta|orcamento|contratacao|licenca|demo|teste|prospect/.test(text)) return "Prospect";
+  if (/recepcao|importacao|layout|csv|arquivo|remessa/.test(text)) return "Recepcao de Arquivo";
+  if (/lentidao|lento|travando/.test(text)) return "Lentidao";
+  if (/integracao|api|webhook/.test(text)) return "Integracao";
+  if (/reset|senha|login|acesso|token/.test(text)) return "Reset Senha";
+  if (/relatorio|extracao|exportacao/.test(text)) return "Relatorio";
+  if (/treinamento|duvida|como faco|orientacao|parametro|configurar/.test(text)) return "Duvida";
+  if (/melhoria|sugestao|feature|nova funcionalidade/.test(text)) return "Melhorias";
+  if (/erro|falha|bug|nao funciona|problema|incidente|indisponivel|sistema parado/.test(text)) return "Incidente";
+  return "Duvida";
 }
 
-function inferDevelopmentType(text, freshdeskType) {
-  if (/customizacao|customização|personalizar|especifico|específico|regra exclusiva|cliente especifico|cliente específico/.test(text)) return "Customização";
-  if (/melhoria|sugestao|sugestão|nova funcionalidade|feature|evolucao|evolução/.test(text) || freshdeskType === "Melhorias") return "Melhoria";
-  if (/bug|erro|falha|exception|nao funciona|não funciona|travado|quebra|corrigir|incidente/.test(text) || freshdeskType === "Incidente") return "BUG (Erros)";
-  return "Não aplicável";
+function inferRequestType(text, freshdeskType) {
+  if (freshdeskType === "Prospect") return "Solicitacao comercial";
+  if (freshdeskType === "Incidente" || /erro|falha|bug|exception|nao funciona|problema/.test(text)) return "Erro tecnico";
+  if (freshdeskType === "Melhorias" || /melhoria|feature|nova funcionalidade|ajuste na regra|desenvolvimento/.test(text)) return "Melhoria / Desenvolvimento";
+  if (/acesso|senha|login|usuario/.test(text)) return "Acesso";
+  if (/duvida|como faco|orientacao|parametro|configurar/.test(text)) return "Duvida operacional";
+  return "Triagem";
 }
 
 function inferPriority(text, freshdeskType) {
-  if (/recepcao travada|recepção travada|sistema parado|operacao parada|operação parada|produção parada|producao parada|indisponivel|indisponível|todos os usuarios|todos os usuários|urgente|critico|crítico/.test(text)) return "Urgente";
-  if (/erro|falha|bug|impacto|bloqueia|nao consegue|não consegue|vencido|prazo/.test(text) || freshdeskType === "Incidente") return "Alta";
-  if (/duvida|dúvida|orientacao|orientação|validar|confirmar|treinamento|reuniao|reunião/.test(text)) return "Média";
-  return "Baixa";
+  if (/recepcao travada|erro em recepcao|sistema parado|operacao parada|parado|indisponivel|urgente|producao|todos os usuarios|todos afetados|bug bloqueante/.test(text)) return "Urgente";
+  if (/erro|falha|impacto|nao consegue|bloqueia|incidente/.test(text) || freshdeskType === "Incidente") return "Alta";
+  if (/duvida|orientacao|parametro|treinamento/.test(text)) return "Baixa";
+  return "Media";
 }
 
-function inferScenario(product, freshdeskType, developmentType, text) {
-  if (product === "Comercial" || freshdeskType === "Prospect") return "Mover para Comercial";
-  if (/delivery|implantacao|implantação|treinamento|migração|migracao/.test(text)) return "Mover para Delivery";
-  if (developmentType !== "Não aplicável" && (/desenvolvimento|dev|bug|melhoria|customizacao|customização|corrigir|ajuste na regra|feature/.test(text) || freshdeskType === "Melhorias" || freshdeskType === "Incidente")) return "Mover para Desenvolvimento";
+function inferDevelopmentType(text, requestType, freshdeskType) {
+  if (/customizacao|customizacao|cliente especifico|regra especifica|personalizado/.test(text)) return "Customizacao";
+  if (/melhoria|sugestao|feature|nova funcionalidade|ajustar tela|evolucao/.test(text) || freshdeskType === "Melhorias") return "Melhoria";
+  if (/erro|bug|falha|incidente|nao funciona|quebrou|travou|exception/.test(text) || requestType === "Erro tecnico") return "BUG (Erros)";
+  return "Melhoria";
+}
+
+function inferScenario(product, requestType, freshdeskType, text) {
+  if (freshdeskType === "Prospect" || /comercial|proposta|contratacao|orcamento|licenca|demo/.test(text)) return "Mover para Comercial";
+  if (/delivery|implantacao|implantacao|treinamento/.test(text)) return "Mover para Delivery";
+  if (/dev|desenvolvimento|bug|melhoria|feature|corrigir|corrigido|customizacao|customizacao/.test(text) || requestType === "Melhoria / Desenvolvimento") return "Mover para Desenvolvimento";
   if (product === "DataBusca") return "Mover para CRM/DataBusca";
   if (product === "DataCob") return "Mover para Datacob";
-  return "Revisão manual pelo Suporte";
-}
-
-function inferStatusSuggestion(scenario, priority, text) {
-  if (scenario === "Mover para Desenvolvimento") return "Análise";
-  if (/aguardando cliente|precisa enviar|solicitar|evidencia|evidência|print|arquivo/.test(text)) return "Aguardando Cliente";
-  if (priority === "Urgente" || priority === "Alta") return "Análise";
-  return "Aberto";
+  return "Revisao manual pelo Suporte";
 }
 
 function inferRoutine(text) {
-  if (/recepcao|recepção|importacao|importação|layout|csv|arquivo/.test(text)) return "Recepção / Importação de arquivos";
-  if (/negociacao|negociação|parcelamento|parcela|calculo|cálculo|boleto/.test(text)) return "Negociação / Parcelamento";
-  if (/login|acesso|senha|usuario|usuário/.test(text)) return "Acesso / Login";
-  if (/relatorio|relatório|extracao|extração/.test(text)) return "Relatórios / Extrações";
+  if (/recepcao|importacao|layout|csv|arquivo/.test(text)) return "Recepcao / Importacao de arquivos";
+  if (/negociacao|parcelamento|parcela|calculo/.test(text)) return "Negociacao / Parcelamento";
+  if (/login|acesso|senha|usuario/.test(text)) return "Acesso / Login";
+  if (/relatorio|extracao|exportacao/.test(text)) return "Relatorios / Extracoes";
   if (/mailing/.test(text)) return "Mailing";
-  if (/parametro|parâmetro|configuracao|configuração/.test(text)) return "Parâmetros / Configurações";
+  if (/parametro|configuracao|vincular|grupo/.test(text)) return "Parametros / Configuracao";
   return "Rotina a confirmar";
 }
 
-function buildSuggestedReply(ticket, product, checklist = []) {
-  const requesterName = ticket.requester?.name || ticket.requester_name || ticket.name || "";
-  const firstName = requesterName ? ` ${requesterName.split(" ")[0]}` : "";
-  return `Olá${firstName},\n\nAgradecemos por sua mensagem e queremos informar que já estamos analisando sua solicitação${product && product !== "Não identificado" ? ` sobre ${product}` : ""}.\n\nPara agilizar a análise, poderia nos encaminhar:\n${checklist.map((item) => `- ${item}`).join("\n")}\n\nCom essas informações conseguiremos direcionar o atendimento com mais precisão.\n\nAtenciosamente,`;
+function ensureAllowedFreshdeskType(value) {
+  if (FRESHDESK_TICKET_TYPES.includes(value)) return value;
+  return "Duvida";
 }
 
-function buildChecklist(freshdeskType, priority) {
-  if (freshdeskType === "Recepção de Arquivo") {
-    return [
-      "Arquivo utilizado na recepção/importação",
-      "Print completo do erro apresentado",
-      "Cliente, carteira, fase e layout utilizado",
-      "Quantidade de registros afetados",
-      "Data e horário da tentativa de processamento"
-    ];
-  }
+function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}) {
+  const rawText = normalizeText(buildTicketText(ticket, conversations, context));
+  const product = analysis.product || inferProduct(rawText);
+  const freshdeskType = ensureAllowedFreshdeskType(analysis.freshdeskType || inferFreshdeskType(rawText));
+  const requestType = analysis.requestType || inferRequestType(rawText, freshdeskType);
+  const priority = analysis.priority || inferPriority(rawText, freshdeskType);
+  const recommendedScenario = analysis.recommendedScenario || inferScenario(product, requestType, freshdeskType, rawText);
+  const developmentType = analysis.developmentType || inferDevelopmentType(rawText, requestType, freshdeskType);
+  const needsDevelopmentSpec = Boolean(
+    analysis.needsDevelopmentSpec ||
+    recommendedScenario === "Mover para Desenvolvimento" ||
+    /bug|desenvolvimento|melhoria|customizacao/.test(normalizeText(`${requestType} ${freshdeskType} ${recommendedScenario}`))
+  );
 
-  if (freshdeskType === "Incidente" || priority === "Urgente" || priority === "Alta") {
-    return [
-      "Print ou vídeo curto do erro",
-      "Passo a passo para reprodução",
-      "Usuário afetado e perfil de acesso",
-      "Contrato, carteira ou registro de exemplo",
-      "Data/hora da ocorrência e se afeta outros usuários"
-    ];
-  }
+  const checklist = Array.isArray(analysis.checklist) && analysis.checklist.length
+    ? analysis.checklist
+    : [
+        "Confirmar produto e rotina impactada",
+        "Solicitar print da tela ou erro apresentado",
+        "Solicitar passo a passo para reproducao",
+        "Confirmar cliente/carteira/contrato de exemplo, quando aplicavel",
+        "Validar se o problema ocorre com todos os usuarios ou apenas um usuario",
+        "Verificar se ha arquivos, logs ou anexos relacionados"
+      ];
 
-  if (freshdeskType === "Prospect") {
-    return [
-      "Produto de interesse",
-      "Nome, empresa, e-mail e telefone do contato",
-      "Necessidade comercial resumida",
-      "Prazo ou urgência informada pelo cliente",
-      "Origem do contato"
-    ];
-  }
-
-  return [
-    "Print da tela, se houver",
-    "Passo a passo realizado",
-    "Comportamento atual e comportamento esperado",
-    "Cliente/carteira/contrato de exemplo, quando aplicável",
-    "Informações complementares para encerrar a dúvida no primeiro retorno"
-  ];
-}
-
-function buildContactSummary(ticket, context = {}) {
-  const contact = context.contact || ticket.requester || {};
-  const phones = [contact.phone, contact.mobile, contact.work_phone].filter(Boolean);
-  return {
-    name: contact.name || ticket.requester?.name || ticket.requester_name || "Não informado",
-    email: contact.email || ticket.requester?.email || ticket.email || ticket.requester_email || "Não informado",
-    phone: phones.length ? phones.join(" / ") : "Não informado",
-    company: context.company?.name || ticket.company_name || ticket.company || "Não informado",
-    requesterId: ticket.requester_id || contact.id || null,
-    companyId: ticket.company_id || context.company?.id || null
+  const hydrated = {
+    source: analysis.source || "local-fallback",
+    product,
+    requestType,
+    freshdeskType,
+    priority,
+    recommendedScenario,
+    recommendedGroup: analysis.recommendedGroup || (product === "DataCob" ? "Suporte DataCob" : product === "DataBusca" ? "Suporte CRM/DataBusca" : product === "Comercial" ? "Comercial" : "Suporte"),
+    developmentType: needsDevelopmentSpec ? developmentType : "Nao indicado",
+    confidence: typeof analysis.confidence === "number" ? analysis.confidence : (product === "Nao identificado" ? 0.45 : 0.74),
+    routine: analysis.routine || inferRoutine(rawText),
+    summary: analysis.summary || `Chamado relacionado a ${product}. Classificacao inicial: ${freshdeskType}. Prioridade sugerida: ${priority}.`,
+    currentScenario: analysis.currentScenario || `O cliente abriu um chamado com indicios de ${requestType.toLowerCase()} relacionado a ${analysis.routine || inferRoutine(rawText)}. E necessario revisar a descricao e as evidencias anexadas antes de concluir o encaminhamento.`,
+    expectedBehavior: analysis.expectedBehavior || "O atendimento deve identificar a causa, orientar o cliente ou encaminhar a demanda com contexto suficiente para analise tecnica.",
+    suggestedReply: analysis.suggestedReply || "Agradecemos por sua mensagem e queremos informar que ja estamos analisando sua solicitacao. Para agilizar a analise, poderia nos encaminhar prints, exemplos, passo a passo realizado e demais evidencias relacionadas ao cenario informado?",
+    checklist,
+    evidenceNeeded: Array.isArray(analysis.evidenceNeeded) && analysis.evidenceNeeded.length ? analysis.evidenceNeeded : checklist,
+    acceptanceCriteria: Array.isArray(analysis.acceptanceCriteria) && analysis.acceptanceCriteria.length
+      ? analysis.acceptanceCriteria
+      : [
+          "O cenario deve ser reproduzivel com as evidencias informadas.",
+          "A solucao deve atender ao comportamento esperado pelo cliente ou regra vigente.",
+          "O suporte deve conseguir validar o retorno antes do encerramento."
+        ],
+    needsDevelopmentSpec,
+    nextAction: analysis.nextAction || "Revisar a analise, confirmar evidencias faltantes e escolher a resposta predefinida mais adequada."
   };
+
+  const recommendedTemplate = getRecommendedTemplate(hydrated);
+  hydrated.recommendedTemplate = recommendedTemplate;
+  hydrated.developmentSpec = buildDevelopmentSpec(hydrated, ticket, context);
+  hydrated.renderedTemplates = renderRecommendedTemplates(ticket, hydrated, context);
+
+  return hydrated;
 }
 
 function buildFallbackAnalysis(ticket, conversations = [], context = {}) {
-  const rawText = buildTicketText(ticket, conversations, context);
-  const text = normalizeText(rawText);
-  const product = inferProduct(text);
-  const freshdeskType = inferFreshdeskType(text);
-  const priority = inferPriority(text, freshdeskType);
-  const developmentType = inferDevelopmentType(text, freshdeskType);
-  const recommendedScenario = inferScenario(product, freshdeskType, developmentType, text);
-  const statusSuggestion = inferStatusSuggestion(recommendedScenario, priority, text);
-  const routine = inferRoutine(text);
-  const checklist = buildChecklist(freshdeskType, priority);
-  const shouldGoToDevelopment = recommendedScenario === "Mover para Desenvolvimento";
-  const contactSummary = buildContactSummary(ticket, context);
-  const supportGroup = product === "DataBusca" ? "Suporte CRM/DataBusca" : product === "DataCob" ? "Suporte DataCob" : product === "Comercial" ? "Comercial" : "Suporte";
-  const groupConfig = SUPPORT_GROUPS[supportGroup] || null;
-
-  const analysis = {
-    source: "local-fallback",
-    product,
-    freshdeskType,
-    requestType: freshdeskType,
-    priority,
-    statusSuggestion,
-    recommendedScenario,
-    recommendedGroup: supportGroup,
-    allowedAgents: groupConfig?.agents || [],
-    developmentType: shouldGoToDevelopment ? developmentType : "Não aplicável",
-    confidence: product === "Não identificado" ? 0.45 : 0.76,
-    routine,
-    contactSummary,
-    relatedTicketsSummary: {
-      openTicketsCount: context.requesterOpenTickets?.length || 0,
-      associatedTicketsCount: context.associatedTickets?.length || 0,
-      message: `${context.requesterOpenTickets?.length || 0} ticket(s) aberto(s) do solicitante e ${context.associatedTickets?.length || 0} ticket(s) associado(s) encontrados.`
-    },
-    summary: `Chamado relacionado a ${product}. Tipo sugerido: ${freshdeskType}. Prioridade sugerida: ${priority}.`,
-    currentScenario: `O cliente abriu um chamado com indícios de ${freshdeskType.toLowerCase()} relacionado a ${routine}. É necessário revisar a descrição, histórico e evidências antes de concluir o encaminhamento.`,
-    expectedBehavior: shouldGoToDevelopment
-      ? "A rotina deve ser corrigida, ajustada ou evoluída conforme o comportamento esperado pelo cliente e as regras vigentes."
-      : "O suporte deve identificar a causa, orientar o cliente e coletar evidências suficientes para resolver ou direcionar corretamente.",
-    suggestedReply: buildSuggestedReply(ticket, product, checklist),
-    predefinedRecommended: freshdeskType === "Prospect" ? "Encaminhamento para Comercial" : freshdeskType === "Incidente" || freshdeskType === "Recepção de Arquivo" ? "Resposta para o cliente (Solicitar mais evidências)" : "Resposta após abertura do chamado - DATACOB",
-    checklist,
-    evidenceNeeded: checklist,
-    acceptanceCriteria: [
-      "O cenário deve ser reproduzível com as evidências informadas.",
-      "A classificação do chamado deve indicar produto, tipo, prioridade e próximo cenário.",
-      "O suporte deve conseguir validar o retorno antes do encerramento."
-    ],
-    needsDevelopmentSpec: shouldGoToDevelopment,
-    predictiveSignal: context.requesterOpenTickets?.length > 3
-      ? "Cliente possui múltiplos tickets abertos. Validar recorrência antes de responder."
-      : "Sem sinal forte de recorrência com os dados coletados."
-  };
-
-  analysis.developmentSpec = buildDevelopmentSpec(analysis, ticket, context);
-  return analysis;
+  return hydrateAnalysis({ source: "local-fallback" }, ticket, conversations, context);
 }
 
 function safeJsonParse(content) {
@@ -221,24 +155,8 @@ function safeJsonParse(content) {
   } catch {
     const match = content.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
-    throw new Error("A IA não retornou JSON válido.");
+    throw new Error("A IA nao retornou JSON valido.");
   }
-}
-
-function normalizeOpenAIAnalysis(analysis, ticket, context) {
-  const fallback = buildFallbackAnalysis(ticket, [], context);
-  const merged = { ...fallback, ...analysis };
-  merged.freshdeskType = FRESHDESK_ALLOWED_TYPES.includes(merged.freshdeskType) ? merged.freshdeskType : fallback.freshdeskType;
-  merged.requestType = merged.freshdeskType;
-  merged.priority = FRESHDESK_ALLOWED_PRIORITIES.includes(merged.priority) ? merged.priority : fallback.priority;
-  merged.statusSuggestion = FRESHDESK_ALLOWED_STATUSES.includes(merged.statusSuggestion) ? merged.statusSuggestion : fallback.statusSuggestion;
-  merged.developmentType = DEVELOPMENT_QUALIFICATION_TYPES.includes(merged.developmentType) ? merged.developmentType : fallback.developmentType;
-  merged.contactSummary = merged.contactSummary || fallback.contactSummary;
-  merged.relatedTicketsSummary = merged.relatedTicketsSummary || fallback.relatedTicketsSummary;
-  merged.checklist = Array.isArray(merged.checklist) && merged.checklist.length ? merged.checklist : fallback.checklist;
-  merged.evidenceNeeded = Array.isArray(merged.evidenceNeeded) && merged.evidenceNeeded.length ? merged.evidenceNeeded : merged.checklist;
-  merged.developmentSpec = buildDevelopmentSpec(merged, ticket, context);
-  return merged;
 }
 
 export async function analyzeSupportTicket(ticket, conversations = [], context = {}) {
@@ -258,47 +176,41 @@ export async function analyzeSupportTicket(ticket, conversations = [], context =
         {
           role: "system",
           content: `
-Você é o PH3A Support Copilot, um copiloto interno para analistas de suporte a clientes.
-Analise chamados do Freshdesk e devolva APENAS JSON válido.
-A IA recomenda; o analista revisa antes de responder, mover ou alterar o ticket.
+Voce e o PH3A Support Copilot, um copiloto interno para analistas de suporte.
+Analise chamados do Freshdesk e devolva APENAS JSON valido.
+Nao responda o cliente diretamente sem revisao humana.
 
-Use somente estes valores para priority: ${FRESHDESK_ALLOWED_PRIORITIES.join(", ")}.
-Use somente estes valores para statusSuggestion: ${FRESHDESK_ALLOWED_STATUSES.join(", ")}.
-Use somente estes valores para freshdeskType: ${FRESHDESK_ALLOWED_TYPES.join(", ")}.
-Para chamados que vão para Desenvolvimento, use somente estes valores para developmentType: ${DEVELOPMENT_QUALIFICATION_TYPES.join(", ")}.
+Classifique usando somente estes valores quando aplicavel:
+- product: DataCob, DataBusca, Comercial, Financeiro, Delivery, Desenvolvimento, Nao identificado
+- requestType: Erro tecnico, Duvida operacional, Acesso, Melhoria / Desenvolvimento, Solicitacao comercial, Triagem
+- freshdeskType: Duvida, Incidente, Integracao, Lentidao, Melhorias, Prospect, Recepcao de Arquivo, Relatorio, Reset Senha, Treinamento, Versao, Alteracao de Licencas, Reclamacao, Sugestao
+- developmentType: Melhoria, Customizacao, BUG (Erros), Nao indicado
+- priority: Baixa, Media, Alta, Urgente
+- recommendedScenario: Mover para Datacob, Mover para CRM/DataBusca, Mover para Comercial, Mover para Delivery, Mover para Desenvolvimento, Revisao manual pelo Suporte
 
-Regras importantes:
-- Comercial, proposta, contratação, licença, orçamento, venda, prospect ou teste => recommendedScenario "Mover para Comercial" e freshdeskType "Prospect".
-- Recepção travada, erro em recepção, sistema parado ou bug bloqueante => priority "Urgente".
-- Desenvolvimento deve ser usado apenas quando houver BUG (Erros), Melhoria ou Customização.
-- Não invente dados de telefone, e-mail ou empresa; use "Não informado" quando não existir.
+Use Urgente para recepcao travada, sistema parado, bug bloqueante, indisponibilidade ou operacao parada.
 
 O JSON deve conter:
 {
   "source": "openai",
-  "product": "DataCob | DataBusca | Comercial | Financeiro | Delivery | Desenvolvimento | Não identificado",
-  "freshdeskType": "",
+  "product": "",
   "requestType": "",
+  "freshdeskType": "",
   "priority": "",
-  "statusSuggestion": "",
-  "recommendedScenario": "Mover para Datacob | Mover para CRM/DataBusca | Mover para Comercial | Mover para Delivery | Mover para Desenvolvimento | Revisão manual pelo Suporte",
+  "recommendedScenario": "",
   "recommendedGroup": "",
-  "allowedAgents": [],
-  "developmentType": "Melhoria | Customização | BUG (Erros) | Não aplicável",
+  "developmentType": "",
   "confidence": 0.0,
   "routine": "",
-  "contactSummary": {"name":"", "email":"", "phone":"", "company":"", "requesterId":"", "companyId":""},
-  "relatedTicketsSummary": {"openTicketsCount":0, "associatedTicketsCount":0, "message":""},
   "summary": "",
   "currentScenario": "",
   "expectedBehavior": "",
   "suggestedReply": "",
-  "predefinedRecommended": "",
   "checklist": [],
   "evidenceNeeded": [],
   "acceptanceCriteria": [],
   "needsDevelopmentSpec": false,
-  "predictiveSignal": ""
+  "nextAction": ""
 }
           `.trim()
         },
@@ -312,9 +224,9 @@ O JSON deve conter:
     const content = completion.choices[0].message.content;
     const analysis = safeJsonParse(content);
     analysis.source = "openai";
-    return normalizeOpenAIAnalysis(analysis, ticket, context);
+    return hydrateAnalysis(analysis, ticket, conversations, context);
   } catch (error) {
-    console.error("Erro na análise IA do suporte:", error);
+    console.error("Erro na analise IA do suporte:", error);
     return buildFallbackAnalysis(ticket, conversations, context);
   }
 }

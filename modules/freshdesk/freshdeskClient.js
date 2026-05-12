@@ -17,7 +17,7 @@ function getFreshdeskConfig() {
     if (!domain) missing.push("FRESHDESK_DOMAIN");
     if (!apiKey) missing.push("FRESHDESK_API_KEY");
 
-    const error = new Error(`Configuração Freshdesk incompleta: ${missing.join(", ")}.`);
+    const error = new Error(`Configuracao Freshdesk incompleta: ${missing.join(", ")}.`);
     error.statusCode = 503;
     error.code = "FRESHDESK_NOT_CONFIGURED";
     throw error;
@@ -44,22 +44,10 @@ function buildHeaders(apiKey, hasBody = false) {
   return headers;
 }
 
-function toQueryString(params = {}) {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return;
-    query.set(key, value);
-  });
-  const text = query.toString();
-  return text ? `?${text}` : "";
-}
-
 async function parseFreshdeskResponse(response) {
   const text = await response.text();
 
-  if (!text) {
-    return null;
-  }
+  if (!text) return null;
 
   try {
     return JSON.parse(text);
@@ -95,12 +83,12 @@ export async function freshdeskRequest(path, options = {}) {
   return payload;
 }
 
-async function optionalFreshdeskRequest(path, fallbackValue) {
+async function safeFreshdesk(path, fallback = null) {
   try {
     return await freshdeskRequest(path);
   } catch (error) {
     console.warn(`Freshdesk opcional falhou em ${path}:`, error.message);
-    return fallbackValue;
+    return fallback;
   }
 }
 
@@ -109,71 +97,87 @@ export async function getTicket(ticketId) {
 }
 
 export async function getTicketConversations(ticketId) {
-  const conversations = await optionalFreshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}/conversations`, []);
+  const conversations = await safeFreshdesk(`/tickets/${encodeURIComponent(ticketId)}/conversations`, []);
   return Array.isArray(conversations) ? conversations : [];
 }
 
+export async function getContact(contactId) {
+  if (!contactId) return null;
+  return safeFreshdesk(`/contacts/${encodeURIComponent(contactId)}`, null);
+}
+
+export async function getCompany(companyId) {
+  if (!companyId) return null;
+  return safeFreshdesk(`/companies/${encodeURIComponent(companyId)}`, null);
+}
+
+export async function getAgent(agentId) {
+  if (!agentId) return null;
+  return safeFreshdesk(`/agents/${encodeURIComponent(agentId)}`, null);
+}
+
+export async function getGroup(groupId) {
+  if (!groupId) return null;
+  return safeFreshdesk(`/groups/${encodeURIComponent(groupId)}`, null);
+}
+
 export async function getAssociatedTickets(ticketId) {
-  const associated = await optionalFreshdeskRequest(`/tickets/${encodeURIComponent(ticketId)}/associated_tickets`, []);
+  const associated = await safeFreshdesk(`/tickets/${encodeURIComponent(ticketId)}/associated_tickets`, []);
   if (Array.isArray(associated)) return associated;
   if (Array.isArray(associated?.tickets)) return associated.tickets;
   return [];
 }
 
-export async function getContact(contactId) {
-  if (!contactId) return null;
-  return optionalFreshdeskRequest(`/contacts/${encodeURIComponent(contactId)}`, null);
-}
+export async function searchTickets(term, maxResults = 10) {
+  const cleanTerm = String(term || "").trim();
+  if (!cleanTerm) return [];
 
-export async function getCompany(companyId) {
-  if (!companyId) return null;
-  return optionalFreshdeskRequest(`/companies/${encodeURIComponent(companyId)}`, null);
-}
-
-export async function getAgent(agentId) {
-  if (!agentId) return null;
-  return optionalFreshdeskRequest(`/agents/${encodeURIComponent(agentId)}`, null);
-}
-
-export async function getGroup(groupId) {
-  if (!groupId) return null;
-  return optionalFreshdeskRequest(`/groups/${encodeURIComponent(groupId)}`, null);
-}
-
-export async function listRequesterTickets(requesterId, limit = 30) {
-  if (!requesterId) return [];
-  const params = toQueryString({
-    requester_id: requesterId,
-    include: "stats",
-    order_by: "created_at",
-    order_type: "desc",
-    per_page: Math.min(Math.max(Number(limit) || 30, 1), 100)
-  });
-  const tickets = await optionalFreshdeskRequest(`/tickets${params}`, []);
-  return Array.isArray(tickets) ? tickets : [];
-}
-
-function escapeFreshdeskSearchTerm(term = "") {
-  return String(term).replace(/'/g, "\\'").trim();
-}
-
-export async function searchTicketsBySubject(term, limit = 10) {
-  const safeTerm = escapeFreshdeskSearchTerm(term);
-  if (!safeTerm) return [];
-
+  const safeTerm = cleanTerm.replace(/"/g, "\\\"");
   const queries = [
-    `subject:'${safeTerm}'`,
-    `description:'${safeTerm}'`
+    `\"subject:'${safeTerm}'\"`,
+    `\"description:'${safeTerm}'\"`,
+    `\"requester_email:'${safeTerm}'\"`
   ];
 
   for (const query of queries) {
-    const encoded = encodeURIComponent(`"${query}"`);
-    const result = await optionalFreshdeskRequest(`/search/tickets?query=${encoded}`, null);
-    const tickets = Array.isArray(result?.results) ? result.results : Array.isArray(result) ? result : [];
-    if (tickets.length) return tickets.slice(0, limit);
+    const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
+    const tickets = Array.isArray(result?.results) ? result.results : [];
+    if (tickets.length) return tickets.slice(0, maxResults);
   }
 
   return [];
+}
+
+export async function getRequesterOpenTickets(requesterId, maxResults = 10) {
+  if (!requesterId) return [];
+  const query = `\"requester_id:${requesterId} AND status:2 OR status:3 OR status:6\"`;
+  const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
+  const tickets = Array.isArray(result?.results) ? result.results : [];
+  return tickets.slice(0, maxResults);
+}
+
+export async function getTicketContext(ticketId) {
+  const ticket = await getTicket(ticketId);
+  const conversations = await getTicketConversations(ticketId);
+  const contact = await getContact(ticket.requester_id || ticket.requester?.id);
+  const company = await getCompany(ticket.company_id || contact?.company_id);
+  const group = await getGroup(ticket.group_id);
+  const agent = await getAgent(ticket.responder_id);
+  const associatedTickets = await getAssociatedTickets(ticketId);
+  const requesterOpenTickets = await getRequesterOpenTickets(ticket.requester_id || contact?.id);
+
+  return {
+    ticket,
+    conversations,
+    context: {
+      contact: contact || ticket.requester || null,
+      company,
+      group,
+      agent,
+      associatedTickets,
+      requesterOpenTickets
+    }
+  };
 }
 
 export async function addPrivateNote(ticketId, htmlBody) {

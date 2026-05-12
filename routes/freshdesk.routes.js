@@ -1,20 +1,21 @@
 import express from "express";
 import {
   addPrivateNote,
-  getAgent,
-  getAssociatedTickets,
-  getCompany,
-  getContact,
-  getGroup,
   getTicket,
+  getTicketContext,
   getTicketConversations,
   isFreshdeskConfigured,
-  listRequesterTickets,
-  searchTicketsBySubject,
+  searchTickets,
   updateTicket
 } from "../modules/freshdesk/freshdeskClient.js";
 import { analyzeSupportTicket } from "../modules/freshdesk/supportAnalyzer.js";
-import { buildInternalNoteHtml, DEFAULT_STATUS_LABELS, formatTicketListForUi } from "../modules/freshdesk/templates.js";
+import {
+  buildInternalNoteHtml,
+  FRESHDESK_TEMPLATES,
+  renderRecommendedTemplates,
+  renderTemplate,
+  textToHtml
+} from "../modules/freshdesk/templates.js";
 
 function getTicketIdFromWebhook(body = {}) {
   return body.ticket_id || body.ticketId || body.id || body.ticket?.id || body.display_id || body.ticket?.display_id;
@@ -26,55 +27,26 @@ function checkWebhookSecret(req, res) {
 
   const received = req.get("x-arriba-webhook-secret") || req.query.secret || req.body.secret;
   if (received !== expected) {
-    res.status(401).json({ error: "Webhook não autorizado." });
+    res.status(401).json({ error: "Webhook nao autorizado." });
     return false;
   }
 
   return true;
 }
 
-function isOpenTicket(ticket = {}) {
-  const rawStatus = ticket.status;
-  const status = DEFAULT_STATUS_LABELS[rawStatus] || String(rawStatus || "").toLowerCase();
-  return !["Resolvido", "Fechado", "resolved", "closed", "4", "5"].includes(status);
-}
-
-async function buildTicketContext(ticketId) {
-  const ticket = await getTicket(ticketId);
-  const [conversations, associatedTickets, contact, company, group, agent] = await Promise.all([
-    getTicketConversations(ticketId),
-    getAssociatedTickets(ticketId),
-    getContact(ticket.requester_id),
-    getCompany(ticket.company_id),
-    getGroup(ticket.group_id),
-    getAgent(ticket.responder_id)
-  ]);
-
-  const requesterTickets = await listRequesterTickets(ticket.requester_id, 30);
-  const requesterOpenTickets = requesterTickets.filter(isOpenTicket);
-
-  const context = {
-    contact,
-    company,
-    group,
-    agent,
-    associatedTickets,
-    requesterTickets,
-    requesterOpenTickets,
-    ui: {
-      associatedTickets: formatTicketListForUi(associatedTickets),
-      requesterOpenTickets: formatTicketListForUi(requesterOpenTickets),
-      requesterTickets: formatTicketListForUi(requesterTickets)
-    }
-  };
-
-  return { ticket, conversations, context };
+function sendError(res, error) {
+  res.status(error.statusCode || 500).json({
+    error: error.message,
+    code: error.code,
+    details: error.details
+  });
 }
 
 async function fetchAndAnalyzeTicket(ticketId) {
-  const { ticket, conversations, context } = await buildTicketContext(ticketId);
-  const analysis = await analyzeSupportTicket(ticket, conversations, context);
-  return { ticket, conversations, context, analysis };
+  const result = await getTicketContext(ticketId);
+  const analysis = await analyzeSupportTicket(result.ticket, result.conversations, result.context);
+  const renderedTemplates = renderRecommendedTemplates(result.ticket, analysis, result.context);
+  return { ...result, analysis, renderedTemplates };
 }
 
 export function createFreshdeskRouter() {
@@ -85,49 +57,41 @@ export function createFreshdeskRouter() {
       ok: true,
       freshdeskConfigured: isFreshdeskConfigured(),
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-      autoNote: process.env.SUPPORT_COPILOT_AUTO_NOTE === "true"
+      autoNote: process.env.SUPPORT_COPILOT_AUTO_NOTE === "true",
+      templates: Object.keys(FRESHDESK_TEMPLATES)
     });
+  });
+
+  router.get("/freshdesk/templates", (req, res) => {
+    res.json({ templates: FRESHDESK_TEMPLATES });
   });
 
   router.get("/freshdesk/tickets/search", async (req, res) => {
     try {
-      const term = String(req.query.term || req.query.q || "").trim();
-      if (!term) return res.status(400).json({ error: "Informe o termo de busca em ?term=." });
-
-      const tickets = await searchTicketsBySubject(term, Number(req.query.limit) || 10);
-      res.json({ term, tickets, ui: { tickets: formatTicketListForUi(tickets) } });
+      const term = req.query.term || req.query.q || "";
+      const tickets = await searchTickets(term);
+      res.json({ term, tickets });
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
     }
   });
 
   router.get("/freshdesk/tickets/:ticketId", async (req, res) => {
     try {
-      const { ticket, conversations, context } = await buildTicketContext(req.params.ticketId);
-      res.json({ ticket, conversations, context });
+      const ticket = await getTicket(req.params.ticketId);
+      const conversations = await getTicketConversations(req.params.ticketId);
+      res.json({ ticket, conversations });
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
     }
   });
 
   router.get("/freshdesk/tickets/:ticketId/context", async (req, res) => {
     try {
-      const { ticket, conversations, context } = await buildTicketContext(req.params.ticketId);
-      res.json({ ticket, conversations, context });
+      const result = await getTicketContext(req.params.ticketId);
+      res.json(result);
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
     }
   });
 
@@ -139,22 +103,50 @@ export function createFreshdeskRouter() {
       let updatedTicket = null;
 
       if (addInternalNote) {
-        note = await addPrivateNote(req.params.ticketId, buildInternalNoteHtml(result.analysis));
+        note = await addPrivateNote(
+          req.params.ticketId,
+          buildInternalNoteHtml(result.analysis, result.ticket, result.context)
+        );
       }
 
       if (updateTags) {
         const currentTags = Array.isArray(result.ticket.tags) ? result.ticket.tags : [];
-        const tags = [...new Set([...currentTags, "support-copilot", `ia-${String(result.analysis.product || "na").toLowerCase()}`])];
+        const productTag = `ia-${String(result.analysis.product || "na").toLowerCase().replace(/\s+/g, "-")}`;
+        const typeTag = `tipo-${String(result.analysis.freshdeskType || "triagem").toLowerCase().replace(/\s+/g, "-")}`;
+        const tags = [...new Set([...currentTags, "support-copilot", productTag, typeTag])];
         updatedTicket = await updateTicket(req.params.ticketId, { tags });
       }
 
       res.json({ ...result, note, updatedTicket });
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
+    }
+  });
+
+  router.post("/freshdesk/tickets/:ticketId/render-template", async (req, res) => {
+    try {
+      const { template = "respostaInicial", analyze = true } = req.body || {};
+      const result = analyze ? await fetchAndAnalyzeTicket(req.params.ticketId) : await getTicketContext(req.params.ticketId);
+      const analysis = result.analysis || {};
+      const rendered = renderTemplate(template, result.ticket, analysis, result.context);
+      res.json({ template: rendered, analysis, ticket: result.ticket, context: result.context });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/freshdesk/tickets/:ticketId/ai-note", async (req, res) => {
+    try {
+      const { template = "notaInternaIA", addInternalNote = true } = req.body || {};
+      const result = await fetchAndAnalyzeTicket(req.params.ticketId);
+      const rendered = renderTemplate(template, result.ticket, result.analysis, result.context);
+      const html = template === "notaInternaIA"
+        ? buildInternalNoteHtml(result.analysis, result.ticket, result.context)
+        : textToHtml(rendered.body);
+      const note = addInternalNote ? await addPrivateNote(req.params.ticketId, html) : null;
+      res.json({ ...result, template: rendered, html, note });
+    } catch (error) {
+      sendError(res, error);
     }
   });
 
@@ -162,17 +154,13 @@ export function createFreshdeskRouter() {
     try {
       const { note } = req.body || {};
       if (!note) {
-        return res.status(400).json({ error: "Informe o conteúdo da nota interna." });
+        return res.status(400).json({ error: "Informe o conteudo da nota interna." });
       }
 
-      const createdNote = await addPrivateNote(req.params.ticketId, note);
+      const createdNote = await addPrivateNote(req.params.ticketId, textToHtml(note));
       res.json({ note: createdNote });
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
     }
   });
 
@@ -190,16 +178,12 @@ export function createFreshdeskRouter() {
       let note = null;
 
       if (shouldAddNote) {
-        note = await addPrivateNote(ticketId, buildInternalNoteHtml(result.analysis));
+        note = await addPrivateNote(ticketId, buildInternalNoteHtml(result.analysis, result.ticket, result.context));
       }
 
       res.json({ received: true, ticketId, ...result, note });
     } catch (error) {
-      res.status(error.statusCode || 500).json({
-        error: error.message,
-        code: error.code,
-        details: error.details
-      });
+      sendError(res, error);
     }
   });
 
@@ -209,7 +193,8 @@ export function createFreshdeskRouter() {
       const conversations = req.body?.conversations || [];
       const context = req.body?.context || {};
       const analysis = await analyzeSupportTicket(ticket, conversations, context);
-      res.json({ ticket, conversations, context, analysis });
+      const renderedTemplates = renderRecommendedTemplates(ticket, analysis, context);
+      res.json({ ticket, conversations, context, analysis, renderedTemplates });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
