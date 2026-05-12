@@ -1,65 +1,131 @@
-# PH3A Support Copilot - Templates Freshdesk
+# Freshdesk Templates - Support Copilot v1.6
 
-Esta versao adiciona uma camada de templates inteligentes para o Freshdesk.
+Esta versao mantem o Support Copilot em **modo somente leitura por padrao**.
 
-## Rotas novas
+O objetivo agora e:
 
-### Listar templates locais
+- buscar contexto do ticket;
+- analisar o chamado;
+- recomendar resposta predefinida;
+- renderizar resposta ao cliente;
+- gerar anotacao interna para copiar;
+- gerar especificacao para Desenvolvimento;
+- **nao gravar nada no Freshdesk automaticamente**.
 
-```http
-GET /freshdesk/templates
+## Variaveis obrigatorias no Render
+
+```env
+FRESHDESK_DOMAIN=ph3a.freshdesk.com
+FRESHDESK_API_KEY=sua-chave
+OPENAI_API_KEY=sua-chave
+OPENAI_MODEL=gpt-4o-mini
+FRESHDESK_ENABLE_WRITES=false
+SUPPORT_COPILOT_AUTO_NOTE=false
 ```
 
-### Renderizar template para um ticket
+## Modo seguro
+
+Com esta configuracao:
+
+```env
+FRESHDESK_ENABLE_WRITES=false
+SUPPORT_COPILOT_AUTO_NOTE=false
+```
+
+As rotas continuam funcionando para leitura e analise:
 
 ```http
+GET  /freshdesk/status
+GET  /freshdesk/templates
+GET  /freshdesk/tickets/:ticketId
+GET  /freshdesk/tickets/:ticketId/context
+POST /freshdesk/tickets/:ticketId/analyze
 POST /freshdesk/tickets/:ticketId/render-template
-Content-Type: application/json
-
-{
-  "template": "solicitarEvidencias",
-  "analyze": true
-}
+POST /freshdesk/tickets/:ticketId/ai-note
+POST /support/copilot/analyze
 ```
 
-Templates disponiveis:
-
-- `respostaInicial`
-- `solicitarEvidencias`
-- `encaminharDesenvolvimento`
-- `direcionamentoComercial`
-- `aguardandoCliente`
-- `notaInternaIA`
-
-### Adicionar nota interna com analise IA
+Mas as acoes de escrita ficam bloqueadas ou ignoradas com seguranca:
 
 ```http
-POST /freshdesk/tickets/:ticketId/ai-note
-Content-Type: application/json
+POST /freshdesk/tickets/:ticketId/note
+POST /freshdesk/webhook/ticket-created
+POST /freshdesk/tickets/:ticketId/analyze { "addInternalNote": true }
+POST /freshdesk/tickets/:ticketId/analyze { "updateTags": true }
+POST /freshdesk/tickets/:ticketId/ai-note { "addInternalNote": true }
+```
 
+Quando uma rota pedir escrita e `FRESHDESK_ENABLE_WRITES=false`, a API retorna `writesEnabled: false` e informa em `skippedWrites` ou `skippedWrite` que a gravacao foi ignorada.
+
+## Status esperado
+
+Acesse:
+
+```http
+GET /freshdesk/status
+```
+
+Retorno esperado em modo seguro:
+
+```json
 {
-  "template": "notaInternaIA",
-  "addInternalNote": true
+  "ok": true,
+  "freshdeskConfigured": true,
+  "openaiConfigured": true,
+  "writesEnabled": false,
+  "autoNote": false,
+  "mode": "read-only"
 }
 ```
 
-## Regra operacional
+## Liberar escrita no futuro
 
-A IA recomenda. O analista revisa.
+Apenas depois dos testes e revisao interna:
 
-No MVP, evite envio automatico de resposta ao cliente. A acao automatizada mais segura e adicionar nota interna privada no ticket.
+```env
+FRESHDESK_ENABLE_WRITES=true
+SUPPORT_COPILOT_AUTO_NOTE=false
+```
 
-## Tipos DEV aceitos
+Mesmo com escrita liberada, mantenha `SUPPORT_COPILOT_AUTO_NOTE=false` enquanto a equipe estiver validando o fluxo.
 
-- Melhoria
-- Customizacao
-- BUG (Erros)
+Para permitir nota automatica por webhook, seria necessario:
 
-## Prioridade
+```env
+FRESHDESK_ENABLE_WRITES=true
+SUPPORT_COPILOT_AUTO_NOTE=true
+```
 
-- Baixa: verde
-- Media: azul
-- Alta: amarelo
-- Urgente: vermelho
+Nao recomendado no MVP.
 
-Use Urgente para recepcao travada, sistema parado, bug bloqueante, indisponibilidade ou operacao parada.
+## Rotas principais para teste
+
+### Buscar contexto
+
+```http
+GET /freshdesk/tickets/65841/context
+```
+
+### Analisar sem escrever
+
+```bash
+curl -X POST https://api.jm.dev.br/freshdesk/tickets/65841/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"addInternalNote": false, "updateTags": false}'
+```
+
+### Gerar nota interna sem gravar
+
+```bash
+curl -X POST https://api.jm.dev.br/freshdesk/tickets/65841/ai-note \
+  -H "Content-Type: application/json" \
+  -d '{"template":"notaInternaIA", "addInternalNote": false}'
+```
+
+### Renderizar resposta predefinida
+
+```bash
+curl -X POST https://api.jm.dev.br/freshdesk/tickets/65841/render-template \
+  -H "Content-Type: application/json" \
+  -d '{"template":"solicitarEvidencias"}'
+```

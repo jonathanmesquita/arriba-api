@@ -21,6 +21,14 @@ function getTicketIdFromWebhook(body = {}) {
   return body.ticket_id || body.ticketId || body.id || body.ticket?.id || body.display_id || body.ticket?.display_id;
 }
 
+function canWriteToFreshdesk() {
+  return process.env.FRESHDESK_ENABLE_WRITES === "true";
+}
+
+function isAutoNoteEnabled() {
+  return canWriteToFreshdesk() && process.env.SUPPORT_COPILOT_AUTO_NOTE === "true";
+}
+
 function checkWebhookSecret(req, res) {
   const expected = process.env.FRESHDESK_WEBHOOK_SECRET;
   if (!expected) return true;
@@ -42,6 +50,14 @@ function sendError(res, error) {
   });
 }
 
+function blockedWriteResponse(res) {
+  return res.status(403).json({
+    error: "Escrita no Freshdesk desativada.",
+    message: "Este ambiente esta em modo somente leitura. Use as rotas de analise, contexto e renderizacao de templates para copiar o conteudo manualmente.",
+    writesEnabled: false
+  });
+}
+
 async function fetchAndAnalyzeTicket(ticketId) {
   const result = await getTicketContext(ticketId);
   const analysis = await analyzeSupportTicket(result.ticket, result.conversations, result.context);
@@ -53,11 +69,14 @@ export function createFreshdeskRouter() {
   const router = express.Router();
 
   router.get("/freshdesk/status", (req, res) => {
+    const writesEnabled = canWriteToFreshdesk();
     res.json({
       ok: true,
       freshdeskConfigured: isFreshdeskConfigured(),
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
-      autoNote: process.env.SUPPORT_COPILOT_AUTO_NOTE === "true",
+      writesEnabled,
+      autoNote: isAutoNoteEnabled(),
+      mode: writesEnabled ? "read-write" : "read-only",
       templates: Object.keys(FRESHDESK_TEMPLATES)
     });
   });
@@ -101,23 +120,38 @@ export function createFreshdeskRouter() {
       const result = await fetchAndAnalyzeTicket(req.params.ticketId);
       let note = null;
       let updatedTicket = null;
+      const skippedWrites = [];
 
       if (addInternalNote) {
-        note = await addPrivateNote(
-          req.params.ticketId,
-          buildInternalNoteHtml(result.analysis, result.ticket, result.context)
-        );
+        if (canWriteToFreshdesk()) {
+          note = await addPrivateNote(
+            req.params.ticketId,
+            buildInternalNoteHtml(result.analysis, result.ticket, result.context)
+          );
+        } else {
+          skippedWrites.push("addInternalNote");
+        }
       }
 
       if (updateTags) {
-        const currentTags = Array.isArray(result.ticket.tags) ? result.ticket.tags : [];
-        const productTag = `ia-${String(result.analysis.product || "na").toLowerCase().replace(/\s+/g, "-")}`;
-        const typeTag = `tipo-${String(result.analysis.freshdeskType || "triagem").toLowerCase().replace(/\s+/g, "-")}`;
-        const tags = [...new Set([...currentTags, "support-copilot", productTag, typeTag])];
-        updatedTicket = await updateTicket(req.params.ticketId, { tags });
+        if (canWriteToFreshdesk()) {
+          const currentTags = Array.isArray(result.ticket.tags) ? result.ticket.tags : [];
+          const productTag = `ia-${String(result.analysis.product || "na").toLowerCase().replace(/\s+/g, "-")}`;
+          const typeTag = `tipo-${String(result.analysis.freshdeskType || "triagem").toLowerCase().replace(/\s+/g, "-")}`;
+          const tags = [...new Set([...currentTags, "support-copilot", productTag, typeTag])];
+          updatedTicket = await updateTicket(req.params.ticketId, { tags });
+        } else {
+          skippedWrites.push("updateTags");
+        }
       }
 
-      res.json({ ...result, note, updatedTicket });
+      res.json({
+        ...result,
+        note,
+        updatedTicket,
+        writesEnabled: canWriteToFreshdesk(),
+        skippedWrites
+      });
     } catch (error) {
       sendError(res, error);
     }
@@ -129,7 +163,13 @@ export function createFreshdeskRouter() {
       const result = analyze ? await fetchAndAnalyzeTicket(req.params.ticketId) : await getTicketContext(req.params.ticketId);
       const analysis = result.analysis || {};
       const rendered = renderTemplate(template, result.ticket, analysis, result.context);
-      res.json({ template: rendered, analysis, ticket: result.ticket, context: result.context });
+      res.json({
+        template: rendered,
+        analysis,
+        ticket: result.ticket,
+        context: result.context,
+        writesEnabled: canWriteToFreshdesk()
+      });
     } catch (error) {
       sendError(res, error);
     }
@@ -137,14 +177,32 @@ export function createFreshdeskRouter() {
 
   router.post("/freshdesk/tickets/:ticketId/ai-note", async (req, res) => {
     try {
-      const { template = "notaInternaIA", addInternalNote = true } = req.body || {};
+      const { template = "notaInternaIA", addInternalNote = false } = req.body || {};
       const result = await fetchAndAnalyzeTicket(req.params.ticketId);
       const rendered = renderTemplate(template, result.ticket, result.analysis, result.context);
       const html = template === "notaInternaIA"
         ? buildInternalNoteHtml(result.analysis, result.ticket, result.context)
         : textToHtml(rendered.body);
-      const note = addInternalNote ? await addPrivateNote(req.params.ticketId, html) : null;
-      res.json({ ...result, template: rendered, html, note });
+
+      let note = null;
+      let skippedWrite = null;
+
+      if (addInternalNote) {
+        if (!canWriteToFreshdesk()) {
+          skippedWrite = "addInternalNote";
+        } else {
+          note = await addPrivateNote(req.params.ticketId, html);
+        }
+      }
+
+      res.json({
+        ...result,
+        template: rendered,
+        html,
+        note,
+        writesEnabled: canWriteToFreshdesk(),
+        skippedWrite
+      });
     } catch (error) {
       sendError(res, error);
     }
@@ -152,13 +210,17 @@ export function createFreshdeskRouter() {
 
   router.post("/freshdesk/tickets/:ticketId/note", async (req, res) => {
     try {
+      if (!canWriteToFreshdesk()) {
+        return blockedWriteResponse(res);
+      }
+
       const { note } = req.body || {};
       if (!note) {
         return res.status(400).json({ error: "Informe o conteudo da nota interna." });
       }
 
       const createdNote = await addPrivateNote(req.params.ticketId, textToHtml(note));
-      res.json({ note: createdNote });
+      res.json({ note: createdNote, writesEnabled: true });
     } catch (error) {
       sendError(res, error);
     }
@@ -174,14 +236,21 @@ export function createFreshdeskRouter() {
       }
 
       const result = await fetchAndAnalyzeTicket(ticketId);
-      const shouldAddNote = process.env.SUPPORT_COPILOT_AUTO_NOTE === "true" || req.body.addInternalNote === true;
+      const shouldAddNote = isAutoNoteEnabled();
       let note = null;
 
       if (shouldAddNote) {
         note = await addPrivateNote(ticketId, buildInternalNoteHtml(result.analysis, result.ticket, result.context));
       }
 
-      res.json({ received: true, ticketId, ...result, note });
+      res.json({
+        received: true,
+        ticketId,
+        ...result,
+        note,
+        writesEnabled: canWriteToFreshdesk(),
+        autoNote: shouldAddNote
+      });
     } catch (error) {
       sendError(res, error);
     }
@@ -194,7 +263,14 @@ export function createFreshdeskRouter() {
       const context = req.body?.context || {};
       const analysis = await analyzeSupportTicket(ticket, conversations, context);
       const renderedTemplates = renderRecommendedTemplates(ticket, analysis, context);
-      res.json({ ticket, conversations, context, analysis, renderedTemplates });
+      res.json({
+        ticket,
+        conversations,
+        context,
+        analysis,
+        renderedTemplates,
+        writesEnabled: canWriteToFreshdesk()
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
