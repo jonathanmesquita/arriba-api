@@ -9,6 +9,8 @@ import {
   updateTicket
 } from "../modules/freshdesk/freshdeskClient.js";
 import { analyzeSupportTicket } from "../modules/freshdesk/supportAnalyzer.js";
+import { buildQualityDashboard, logSupportAnalysis, readSupportLogs } from "../modules/freshdesk/localLogs.js";
+import { listSupportedPlaceholders } from "../modules/freshdesk/placeholders.js";
 import {
   buildInternalNoteHtml,
   FRESHDESK_TEMPLATES,
@@ -61,7 +63,8 @@ function blockedWriteResponse(res) {
 async function fetchAndAnalyzeTicket(ticketId) {
   const result = await getTicketContext(ticketId);
   const analysis = await analyzeSupportTicket(result.ticket, result.conversations, result.context);
-  const renderedTemplates = renderRecommendedTemplates(result.ticket, analysis, result.context);
+  const renderedTemplates = renderRecommendedTemplates(result.ticket, analysis, result.context, result.conversations);
+  await logSupportAnalysis({ ticket: result.ticket, analysis, context: result.context, action: "freshdesk-ticket-analysis" });
   return { ...result, analysis, renderedTemplates };
 }
 
@@ -83,6 +86,27 @@ export function createFreshdeskRouter() {
 
   router.get("/freshdesk/templates", (req, res) => {
     res.json({ templates: FRESHDESK_TEMPLATES });
+  });
+
+  router.get("/freshdesk/placeholders", (req, res) => {
+    res.json({ placeholders: listSupportedPlaceholders() });
+  });
+
+  router.get("/freshdesk/quality/dashboard", async (req, res) => {
+    try {
+      res.json(await buildQualityDashboard());
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/support/copilot/logs", async (req, res) => {
+    try {
+      const limit = Number(req.query.limit || 50);
+      res.json({ logs: await readSupportLogs(limit) });
+    } catch (error) {
+      sendError(res, error);
+    }
   });
 
   router.get("/freshdesk/tickets/search", async (req, res) => {
@@ -126,7 +150,7 @@ export function createFreshdeskRouter() {
         if (canWriteToFreshdesk()) {
           note = await addPrivateNote(
             req.params.ticketId,
-            buildInternalNoteHtml(result.analysis, result.ticket, result.context)
+            buildInternalNoteHtml(result.analysis, result.ticket, result.context, result.conversations || [])
           );
         } else {
           skippedWrites.push("addInternalNote");
@@ -162,7 +186,7 @@ export function createFreshdeskRouter() {
       const { template = "respostaInicial", analyze = true } = req.body || {};
       const result = analyze ? await fetchAndAnalyzeTicket(req.params.ticketId) : await getTicketContext(req.params.ticketId);
       const analysis = result.analysis || {};
-      const rendered = renderTemplate(template, result.ticket, analysis, result.context);
+      const rendered = renderTemplate(template, result.ticket, analysis, result.context, result.conversations || []);
       res.json({
         template: rendered,
         analysis,
@@ -179,9 +203,9 @@ export function createFreshdeskRouter() {
     try {
       const { template = "notaInternaIA", addInternalNote = false } = req.body || {};
       const result = await fetchAndAnalyzeTicket(req.params.ticketId);
-      const rendered = renderTemplate(template, result.ticket, result.analysis, result.context);
+      const rendered = renderTemplate(template, result.ticket, result.analysis, result.context, result.conversations || []);
       const html = template === "notaInternaIA"
-        ? buildInternalNoteHtml(result.analysis, result.ticket, result.context)
+        ? buildInternalNoteHtml(result.analysis, result.ticket, result.context, result.conversations || [])
         : textToHtml(rendered.body);
 
       let note = null;
@@ -240,7 +264,7 @@ export function createFreshdeskRouter() {
       let note = null;
 
       if (shouldAddNote) {
-        note = await addPrivateNote(ticketId, buildInternalNoteHtml(result.analysis, result.ticket, result.context));
+        note = await addPrivateNote(ticketId, buildInternalNoteHtml(result.analysis, result.ticket, result.context, result.conversations || []));
       }
 
       res.json({

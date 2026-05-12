@@ -121,6 +121,12 @@ export async function getGroup(groupId) {
   return safeFreshdesk(`/groups/${encodeURIComponent(groupId)}`, null);
 }
 
+export async function getGroupAgents(groupId) {
+  if (!groupId) return [];
+  const agents = await safeFreshdesk(`/agents?group_id=${encodeURIComponent(groupId)}`, []);
+  return Array.isArray(agents) ? agents : [];
+}
+
 export async function getAssociatedTickets(ticketId) {
   const associated = await safeFreshdesk(`/tickets/${encodeURIComponent(ticketId)}/associated_tickets`, []);
   if (Array.isArray(associated)) return associated;
@@ -148,12 +154,34 @@ export async function searchTickets(term, maxResults = 10) {
   return [];
 }
 
-export async function getRequesterOpenTickets(requesterId, maxResults = 10) {
-  if (!requesterId) return [];
-  const query = `\"requester_id:${requesterId} AND status:2 OR status:3 OR status:6\"`;
-  const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
-  const tickets = Array.isArray(result?.results) ? result.results : [];
-  return tickets.slice(0, maxResults);
+export async function getRequesterOpenTickets(requesterId, requesterEmail = "", maxResults = 10) {
+  const queries = [];
+  if (requesterId) queries.push(`"requester_id:${requesterId}"`);
+  if (requesterEmail) {
+    const safeEmail = String(requesterEmail).replace(/"/g, "\"");
+    queries.push(`"requester_email:'${safeEmail}'"`);
+  }
+
+  for (const query of queries) {
+    const result = await safeFreshdesk(`/search/tickets?query=${encodeURIComponent(query)}`, null);
+    const tickets = Array.isArray(result?.results) ? result.results : [];
+    const openTickets = tickets.filter((ticket) => ![4, 5].includes(Number(ticket.status))).slice(0, maxResults);
+    if (openTickets.length) return openTickets;
+  }
+
+  return [];
+}
+
+export async function getRecurrenceCandidates(ticket, maxResults = 10) {
+  const subject = String(ticket?.subject || "").trim();
+  if (!subject) return [];
+  const terms = subject
+    .split(/\s+/)
+    .filter((item) => item.length > 4)
+    .slice(0, 3)
+    .join(" ");
+  if (!terms) return [];
+  return searchTickets(terms, maxResults);
 }
 
 export async function getTicketContext(ticketId) {
@@ -163,8 +191,10 @@ export async function getTicketContext(ticketId) {
   const company = await getCompany(ticket.company_id || contact?.company_id);
   const group = await getGroup(ticket.group_id);
   const agent = await getAgent(ticket.responder_id);
+  const groupAgents = await getGroupAgents(ticket.group_id);
   const associatedTickets = await getAssociatedTickets(ticketId);
-  const requesterOpenTickets = await getRequesterOpenTickets(ticket.requester_id || contact?.id);
+  const requesterOpenTickets = await getRequesterOpenTickets(ticket.requester_id || contact?.id, contact?.email || ticket.requester?.email);
+  const recurrenceCandidates = await getRecurrenceCandidates(ticket);
 
   return {
     ticket,
@@ -174,8 +204,10 @@ export async function getTicketContext(ticketId) {
       company,
       group,
       agent,
+      groupAgents,
       associatedTickets,
-      requesterOpenTickets
+      requesterOpenTickets,
+      recurrenceCandidates
     }
   };
 }

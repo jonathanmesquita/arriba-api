@@ -1,3 +1,4 @@
+import { renderPlaceholders, buildPlaceholderVariables } from "./placeholders.js";
 export const FRESHDESK_SCENARIOS = {
   datacob: "Mover para Datacob",
   databasa: "Mover para CRM/DataBusca",
@@ -10,7 +11,7 @@ export const FRESHDESK_SCENARIOS = {
 export const FRESHDESK_PRIORITIES = ["Baixa", "Media", "Alta", "Urgente"];
 export const DEV_TYPES = ["Melhoria", "Customizacao", "BUG (Erros)"];
 
-export const SUPPORT_DATABOC_AGENTS = [
+export const SUPPORT_DATACOB_AGENTS = [
   "Jonathan Mesquita",
   "Jonathan Oliveira Mesquita",
   "Ariel Fernando Saraiva da Silva",
@@ -19,6 +20,8 @@ export const SUPPORT_DATABOC_AGENTS = [
   "Ana Caroline Amarim de Souza",
   "Ananias Neto"
 ];
+
+export const SUPPORT_DATABOC_AGENTS = SUPPORT_DATACOB_AGENTS;
 
 export const FRESHDESK_TICKET_TYPES = [
   "Duvida",
@@ -134,14 +137,50 @@ Atenciosamente,
 
 Ticket: #{{ticket.id}}
 Assunto: {{ticket.subject}}
-Solicitante: {{ticket.requester.name}} - {{ticket.requester.email}}
+URL do ticket: {{ticket.url}}
+Portal: {{ticket.portal_url}}
+Helpdesk: {{helpdesk_name}}
+Portal Freshdesk: {{ticket.portal_name}}
+
+Solicitante: {{ticket.requester.name}}
+Primeiro nome: {{ticket.requester.firstname}}
+Sobrenome: {{ticket.requester.lastname}}
+E-mail: {{ticket.requester.email}}
 Telefone: {{ticket.requester.phone}}
+Celular: {{ticket.requester.mobile}}
+Endereco: {{ticket.requester.address}}
+ID externo: {{ticket.requester.unique_external_id}}
+
 Empresa: {{ticket.company.name}}
+Razao social: {{ticket.company.businessname}}
+Segmento: {{ticket.company.industry}}
+Tier: {{ticket.company.account_tier}}
+Health score: {{ticket.company.health_score}}
+Dominios: {{ticket.company.domains}}
+Renovacao: {{ticket.company.renewal_date}}
+Descricao empresa: {{ticket.company.description}}
+Nota empresa: {{ticket.company.note}}
+
 Grupo atual: {{ticket.group.name}}
-Agente atual: {{ticket.agent.name}}
+Agente atual: {{ticket.agent.name}} - {{ticket.agent.email}}
+Grupo interno: {{ticket.internal_group.name}}
+Agente interno: {{ticket.internal_agent.name}} - {{ticket.internal_agent.email}}
 Status atual: {{ticket.status}}
 Prioridade atual: {{ticket.priority}}
+Origem: {{ticket.source}}
+Tipo atual: {{ticket.ticket_type}}
 Tags: {{ticket.tags}}
+Vencimento/SLA: {{ticket.due_by_time}}
+Ticket pai: {{ticket.parent_ticket_id}}
+Ticket tracker: {{ticket.tracker_ticket_id}}
+Pesquisa de satisfacao: {{ticket.satisfaction_survey}}
+Produto: {{ticket.product_description}}
+
+Ultimo comentario publico:
+{{ticket.latest_public_comment}}
+
+Ultimo comentario privado:
+{{ticket.latest_private_comment}}
 
 Resumo da solicitacao:
 {{ai.summary}}
@@ -161,6 +200,12 @@ Prioridade sugerida:
 Cenario recomendado:
 {{ai.recommendedScenario}}
 
+Grupo recomendado:
+{{ai.recommendedGroup}}
+
+Validacao agente/grupo:
+{{ai.agentValidationStatus}} - {{ai.agentValidationMessage}}
+
 Resposta predefinida recomendada:
 {{ai.recommendedTemplateTitle}}
 
@@ -169,6 +214,18 @@ Checklist de evidencias:
 
 Proxima acao sugerida:
 {{ai.nextAction}}
+
+Campos customizados principais:
+VSTS ID: {{ticket.cf_vstsid}}
+Permissao de acesso: {{ticket.cf_permisso_de_acesso}}
+Telefone FSM: {{ticket.cf_fsm_phone_number}}
+Contato FSM: {{ticket.cf_fsm_contact_name}}
+Inicio FSM: {{ticket.cf_fsm_appointment_start_time}}
+Fim FSM: {{ticket.cf_fsm_appointment_end_time}}
+Local FSM: {{ticket.cf_fsm_service_location}}
+Assinatura FSM: {{ticket.cf_fsm_customer_signature}}
+Teste: {{ticket.cf_teste}}
+Testes: {{ticket.cf_testes}}
 
 Atencao:
 Esta anotacao foi gerada por IA/fallback local para apoiar a triagem. O analista deve revisar antes de responder, alterar propriedades ou encaminhar o chamado.`
@@ -285,19 +342,17 @@ export function buildTemplateVariables(ticket = {}, analysis = {}, context = {})
   };
 }
 
-export function renderTemplate(templateKey, ticket = {}, analysis = {}, context = {}) {
+export function renderTemplate(templateKey, ticket = {}, analysis = {}, context = {}, conversations = []) {
   const template = FRESHDESK_TEMPLATES[templateKey] || FRESHDESK_TEMPLATES.respostaInicial;
-  const vars = buildTemplateVariables(ticket, analysis, context);
-  const body = template.body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, key) => {
-    const value = vars[key.trim()];
-    return value === undefined || value === null || value === "" ? "-" : String(value);
-  });
+  const body = renderPlaceholders(template.body, ticket, analysis, context, conversations);
+  const variables = buildPlaceholderVariables(ticket, analysis, context, conversations);
 
   return {
     key: templateKey,
     title: template.title,
     type: template.type,
-    body
+    body,
+    variables
   };
 }
 
@@ -331,12 +386,12 @@ export function getRecommendedTemplate(analysis = {}) {
   return { key: "respostaInicial", title: FRESHDESK_TEMPLATES.respostaInicial.title };
 }
 
-export function renderRecommendedTemplates(ticket = {}, analysis = {}, context = {}) {
+export function renderRecommendedTemplates(ticket = {}, analysis = {}, context = {}, conversations = []) {
   const recommended = getRecommendedTemplate(analysis);
   return {
     recommended,
-    customerReply: renderTemplate(recommended.key, ticket, analysis, context),
-    internalNote: renderTemplate("notaInternaIA", ticket, analysis, context)
+    customerReply: renderTemplate(recommended.key, ticket, analysis, context, conversations),
+    internalNote: renderTemplate("notaInternaIA", ticket, analysis, context, conversations)
   };
 }
 
@@ -370,8 +425,8 @@ export function buildTicketText(ticket, conversations = [], context = {}) {
     .join("\n");
 }
 
-export function buildInternalNoteHtml(analysis, ticket = {}, context = {}) {
-  const note = renderTemplate("notaInternaIA", ticket, analysis, context);
+export function buildInternalNoteHtml(analysis, ticket = {}, context = {}, conversations = []) {
+  const note = renderTemplate("notaInternaIA", ticket, analysis, context, conversations);
   const spec = analysis.developmentSpec
     ? `\n\n------------------------------\nESPECIFICACAO SUGERIDA PARA DESENVOLVIMENTO\n------------------------------\n${analysis.developmentSpec}`
     : "";

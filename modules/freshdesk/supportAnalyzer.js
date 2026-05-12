@@ -5,7 +5,8 @@ import {
   FRESHDESK_TICKET_TYPES,
   getRecommendedTemplate,
   normalizeText,
-  renderRecommendedTemplates
+  renderRecommendedTemplates,
+  SUPPORT_DATACOB_AGENTS
 } from "./templates.js";
 
 function hasOpenAI() {
@@ -79,6 +80,50 @@ function inferRoutine(text) {
   return "Rotina a confirmar";
 }
 
+function classifyDevelopmentTypeStrict(text, requestType, freshdeskType, needsDevelopmentSpec) {
+  if (!needsDevelopmentSpec) return "Nao indicado";
+
+  if (/customizacao|customizacao|cliente especifico|regra especifica|personalizado|exclusivo|particularidade|excecao para cliente|parametrizacao exclusiva|sob medida/.test(text)) {
+    return "Customizacao";
+  }
+
+  if (/erro|bug|falha|incidente|nao funciona|nao esta funcionando|quebrou|travou|exception|stack|trace|sistema parado|operacao parada|recepcao travada|indisponivel|regressao|parou de funcionar/.test(text) || requestType === "Erro tecnico" || freshdeskType === "Incidente") {
+    return "BUG (Erros)";
+  }
+
+  return "Melhoria";
+}
+
+function validateAgentGroup(context = {}, recommendedGroup = "") {
+  const groupName = normalizeText(context.group?.name || recommendedGroup || "");
+  const agentName = context.agent?.name || "";
+  const normalizedAgent = normalizeText(agentName);
+  const validAgents = SUPPORT_DATACOB_AGENTS;
+  const isDataCobGroup = groupName.includes("datacob");
+
+  if (!isDataCobGroup) {
+    return {
+      status: "Nao aplicavel",
+      message: "Grupo atual/recomendado nao identificado como Suporte DataCob.",
+      currentAgent: agentName || "Nao informado",
+      currentGroup: context.group?.name || recommendedGroup || "Nao informado",
+      validAgents
+    };
+  }
+
+  const isValidAgent = validAgents.some((name) => normalizeText(name) === normalizedAgent);
+
+  return {
+    status: isValidAgent ? "OK" : "Alerta",
+    message: isValidAgent
+      ? "Agente atual pertence a lista validada do grupo Suporte DataCob."
+      : "Agente atual nao esta na lista validada do grupo Suporte DataCob. Revisar atribuicao antes do encaminhamento.",
+    currentAgent: agentName || "Nao informado",
+    currentGroup: context.group?.name || recommendedGroup || "Suporte DataCob",
+    validAgents
+  };
+}
+
 function ensureAllowedFreshdeskType(value) {
   if (FRESHDESK_TICKET_TYPES.includes(value)) return value;
   return "Duvida";
@@ -91,12 +136,14 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
   const requestType = analysis.requestType || inferRequestType(rawText, freshdeskType);
   const priority = analysis.priority || inferPriority(rawText, freshdeskType);
   const recommendedScenario = analysis.recommendedScenario || inferScenario(product, requestType, freshdeskType, rawText);
-  const developmentType = analysis.developmentType || inferDevelopmentType(rawText, requestType, freshdeskType);
-  const needsDevelopmentSpec = Boolean(
+  const initialNeedsDevelopmentSpec = Boolean(
     analysis.needsDevelopmentSpec ||
     recommendedScenario === "Mover para Desenvolvimento" ||
-    /bug|desenvolvimento|melhoria|customizacao/.test(normalizeText(`${requestType} ${freshdeskType} ${recommendedScenario}`))
+    /bug|desenvolvimento|melhoria|customizacao|customizacao|incidente|erro tecnico/.test(normalizeText(`${requestType} ${freshdeskType} ${recommendedScenario}`))
   );
+  const inferredDevelopmentType = analysis.developmentType || inferDevelopmentType(rawText, requestType, freshdeskType);
+  const needsDevelopmentSpec = initialNeedsDevelopmentSpec || ["Melhoria", "Customizacao", "BUG (Erros)"].includes(inferredDevelopmentType);
+  const developmentType = classifyDevelopmentTypeStrict(rawText, requestType, freshdeskType, needsDevelopmentSpec);
 
   const checklist = Array.isArray(analysis.checklist) && analysis.checklist.length
     ? analysis.checklist
@@ -108,6 +155,8 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
         "Validar se o problema ocorre com todos os usuarios ou apenas um usuario",
         "Verificar se ha arquivos, logs ou anexos relacionados"
       ];
+
+  const agentValidation = validateAgentGroup(context, analysis.recommendedGroup || (product === "DataCob" ? "Suporte DataCob" : ""));
 
   const hydrated = {
     source: analysis.source || "local-fallback",
@@ -134,13 +183,14 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
           "O suporte deve conseguir validar o retorno antes do encerramento."
         ],
     needsDevelopmentSpec,
+    agentValidation,
     nextAction: analysis.nextAction || "Revisar a analise, confirmar evidencias faltantes e escolher a resposta predefinida mais adequada."
   };
 
   const recommendedTemplate = getRecommendedTemplate(hydrated);
   hydrated.recommendedTemplate = recommendedTemplate;
   hydrated.developmentSpec = buildDevelopmentSpec(hydrated, ticket, context);
-  hydrated.renderedTemplates = renderRecommendedTemplates(ticket, hydrated, context);
+  hydrated.renderedTemplates = renderRecommendedTemplates(ticket, hydrated, context, conversations);
 
   return hydrated;
 }
@@ -189,6 +239,7 @@ Classifique usando somente estes valores quando aplicavel:
 - recommendedScenario: Mover para Datacob, Mover para CRM/DataBusca, Mover para Comercial, Mover para Delivery, Mover para Desenvolvimento, Revisao manual pelo Suporte
 
 Use Urgente para recepcao travada, sistema parado, bug bloqueante, indisponibilidade ou operacao parada.
+Quando recommendedScenario for Mover para Desenvolvimento, developmentType deve ser somente: Melhoria, Customizacao ou BUG (Erros).
 
 O JSON deve conter:
 {
@@ -210,7 +261,8 @@ O JSON deve conter:
   "evidenceNeeded": [],
   "acceptanceCriteria": [],
   "needsDevelopmentSpec": false,
-  "nextAction": ""
+  "nextAction": "",
+  "agentValidation": {}
 }
           `.trim()
         },
