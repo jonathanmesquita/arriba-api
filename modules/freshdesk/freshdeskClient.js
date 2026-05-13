@@ -285,10 +285,82 @@ export async function getRequesterOpenTickets(requesterId, requesterEmail = "", 
   return tickets.filter(isOpenTicket).slice(0, maxResults);
 }
 
-export async function getCompanyOpenTickets(companyId, maxResults = 30) {
+export async function getRequesterClosedTickets(requesterId, requesterEmail = "", maxResults = 30) {
+  const tickets = await getRequesterTickets(requesterId, requesterEmail, { maxResults: Math.max(maxResults, 50) });
+  return tickets.filter((ticket) => !isOpenTicket(ticket)).slice(0, maxResults);
+}
+
+export async function getCompanyTickets(companyId, maxResults = 50) {
   if (!companyId) return [];
   const tickets = await listTickets({ company_id: companyId, include: "requester,stats" }, { perPage: 100, maxPages: 3 });
+  return sortTicketsByDate(dedupeTickets(tickets)).slice(0, maxResults);
+}
+
+export async function getCompanyOpenTickets(companyId, maxResults = 30) {
+  const tickets = await getCompanyTickets(companyId, Math.max(maxResults, 50));
   return sortTicketsByDate(dedupeTickets(tickets).filter(isOpenTicket)).slice(0, maxResults);
+}
+
+export async function getCompanyClosedTickets(companyId, maxResults = 30) {
+  const tickets = await getCompanyTickets(companyId, Math.max(maxResults, 50));
+  return sortTicketsByDate(dedupeTickets(tickets).filter((ticket) => !isOpenTicket(ticket))).slice(0, maxResults);
+}
+
+function ticketTextForInsight(ticket = {}) {
+  return String([ticket.subject, ticket.description_text, ticket.description, ticket.type, ticket.ticket_type].filter(Boolean).join(" ")).toLowerCase();
+}
+
+function inferTicketProblem(ticket = {}) {
+  const text = ticketTextForInsight(ticket).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/relatorio|extracao|exportacao|dashboard|indicador/.test(text)) return "Relatorio / extracao";
+  if (/recepcao|importacao|layout|csv|arquivo|remessa|carga/.test(text)) return "Recepcao de arquivo";
+  if (/erro|falha|bug|exception|cannot insert|null|nao funciona|incidente/.test(text)) return "Erro / bug";
+  if (/lentidao|lento|performance|travando|demora/.test(text)) return "Lentidao";
+  if (/senha|login|acesso|permissao|token|tag/.test(text)) return "Acesso / permissao";
+  if (/parametro|configuracao|configurar|vincular/.test(text)) return "Parametro / configuracao";
+  if (/proposta|orcamento|contratacao|licenca|comercial|demo|trial|venda/.test(text)) return "Comercial";
+  if (/treinamento|duvida|orientacao|como faco|como fazer/.test(text)) return "Duvida operacional";
+  return "Outros";
+}
+
+function countBy(items = [], mapper = (item) => item) {
+  return items.reduce((acc, item) => {
+    const key = mapper(item) || "Nao informado";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function buildRecurrenceInsights({ requesterAllTickets = [], requesterOpenTickets = [], companyOpenTickets = [], associatedTickets = [], recurrenceCandidates = [] } = {}) {
+  const all = dedupeTickets([
+    ...requesterAllTickets,
+    ...companyOpenTickets,
+    ...associatedTickets,
+    ...recurrenceCandidates
+  ]);
+  const problemCounts = countBy(all, inferTicketProblem);
+  const priorityCounts = countBy(all, (ticket) => ticket.priority_name || ticket.priority_label || String(ticket.priority || "Nao informado"));
+  const statusCounts = countBy(all, (ticket) => ticket.status_name || ticket.status_label || String(ticket.status || "Nao informado"));
+  const topProblems = Object.entries(problemCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const alerts = [];
+  topProblems.forEach(([label, count]) => {
+    if (count >= 3 && label !== "Outros") {
+      alerts.push(`${count} chamado(s) relacionados a ${label}. Revisar recorrencia e necessidade de acao preventiva.`);
+    }
+  });
+  if (requesterOpenTickets.length >= 5) alerts.push(`${requesterOpenTickets.length} chamado(s) abertos do mesmo solicitante. Priorizar leitura do historico antes de responder.`);
+  if (companyOpenTickets.length >= 10) alerts.push(`${companyOpenTickets.length} chamado(s) abertos da empresa. Possivel recorrencia por cliente/carteira.`);
+
+  return {
+    totalAnalyzedTickets: all.length,
+    requesterOpenCount: requesterOpenTickets.length,
+    companyOpenCount: companyOpenTickets.length,
+    associatedCount: associatedTickets.length,
+    topProblems: Object.fromEntries(topProblems),
+    priorityCounts,
+    statusCounts,
+    alerts
+  };
 }
 
 export async function getRecurrenceCandidates(ticket, maxResults = 10) {
@@ -314,10 +386,16 @@ export async function getTicketContext(ticketId) {
   const associatedTickets = await getAssociatedTickets(ticketId);
   const requesterId = ticket.requester_id || contact?.id || ticket.requester?.id;
   const requesterEmail = contact?.email || ticket.requester?.email || ticket.requester_email || ticket.email;
-  const requesterAllTickets = await getRequesterTickets(requesterId, requesterEmail, { maxResults: 50 });
-  const requesterOpenTickets = requesterAllTickets.filter(isOpenTicket).slice(0, 30);
-  const companyOpenTickets = await getCompanyOpenTickets(ticket.company_id || contact?.company_id, 30);
+  const requesterAllTickets = await getRequesterTickets(requesterId, requesterEmail, { maxResults: 80 });
+  const requesterOpenTickets = requesterAllTickets.filter(isOpenTicket).slice(0, 50);
+  const requesterClosedTickets = requesterAllTickets.filter((item) => !isOpenTicket(item)).slice(0, 50);
+  const companyId = ticket.company_id || contact?.company_id;
+  const companyOpenTickets = await getCompanyOpenTickets(companyId, 50);
+  const companyClosedTickets = await getCompanyClosedTickets(companyId, 50);
   const recurrenceCandidates = await getRecurrenceCandidates(ticket);
+  const openTickets = sortTicketsByDate(dedupeTickets([...requesterOpenTickets, ...companyOpenTickets, ...associatedTickets.filter(isOpenTicket)])).slice(0, 80);
+  const closedTickets = sortTicketsByDate(dedupeTickets([...requesterClosedTickets, ...companyClosedTickets, ...associatedTickets.filter((item) => !isOpenTicket(item))])).slice(0, 80);
+  const recurrenceInsights = buildRecurrenceInsights({ requesterAllTickets, requesterOpenTickets, companyOpenTickets, associatedTickets, recurrenceCandidates });
 
   return {
     ticket,
@@ -331,14 +409,22 @@ export async function getTicketContext(ticketId) {
       associatedTickets,
       requesterAllTickets,
       requesterOpenTickets,
+      requesterClosedTickets,
       companyOpenTickets,
+      companyClosedTickets,
+      openTickets,
+      closedTickets,
       recurrenceCandidates,
+      recurrenceInsights,
       requesterTicketSummary: {
         requesterId: requesterId || null,
         requesterEmail: requesterEmail || null,
         totalFound: requesterAllTickets.length,
         openFound: requesterOpenTickets.length,
+        closedFound: requesterClosedTickets.length,
         companyOpenFound: companyOpenTickets.length,
+        companyClosedFound: companyClosedTickets.length,
+        associatedFound: associatedTickets.length,
         strategy: requesterAllTickets.length ? "tickets_endpoint" : "empty"
       }
     }

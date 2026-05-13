@@ -43,12 +43,21 @@ function hasCommercialIntent(text) {
   return /comercial|proposta|orcamento|orçamento|contratacao|contratação|licenca|licença|valor de contrato|preco|preço|venda|comprar|contratar|demo|prospect|trial/.test(text);
 }
 
+function hasReportIntent(text) {
+  return /relatorio|relatório|extracao|extração|exportacao|exportação|dashboard|indicador|consulta|dados para listar|cpfs|contratos no processamento|listar contratos|extração de relatório|extrair relatório/.test(text);
+}
+
+function asksNewFunctionality(text) {
+  return /disponibilizar|criar|nova funcionalidade|funcionalidade|implementar|incluir|adicionar|seria de grande ajuda|precisamos de|gostaria que|solicitamos|possibilidade/.test(text);
+}
+
 function inferFreshdeskTypeStrong(text, currentType = "") {
   const normalizedCurrent = normalizeText(currentType);
 
+  if (hasReportIntent(text) && !hasCommercialIntent(text)) return "Relatorio";
   if (hasCommercialIntent(text)) return "Prospect";
   if (/recepcao|recepção|importacao|importação|layout|csv|arquivo|remessa|carga/.test(text)) return "Recepcao de Arquivo";
-  if (/relatorio|relatório|extracao|extração|exportacao|exportação|dashboard|indicador|consulta|dados para listar|cpfs|contratos no processamento/.test(text)) return "Relatorio";
+  if (hasReportIntent(text)) return "Relatorio";
   if (/lentidao|lentidão|lento|travando|performance|demora/.test(text)) return "Lentidao";
   if (/integracao|integração|api|webhook|endpoint|conector/.test(text)) return "Integracao";
   if (/reset|senha|login|acesso|token|tag|permissao|permissão/.test(text)) return "Reset Senha";
@@ -149,11 +158,13 @@ function inferRoutine(text) {
 function classifyDevelopmentTypeStrict(text, requestType, freshdeskType, needsDevelopmentSpec) {
   if (!needsDevelopmentSpec) return "Nao indicado";
 
-  if (/customizacao|customizacao|cliente especifico|regra especifica|personalizado|exclusivo|particularidade|excecao para cliente|parametrizacao exclusiva|sob medida/.test(text)) {
+  if (hasReportIntent(text) && asksNewFunctionality(text)) return "Customizacao";
+
+  if (/customizacao|customização|cliente especifico|cliente específico|regra especifica|regra específica|personalizado|exclusivo|particularidade|excecao para cliente|exceção para cliente|parametrizacao exclusiva|parametrização exclusiva|sob medida/.test(text)) {
     return "Customizacao";
   }
 
-  if (/erro|bug|falha|incidente|nao funciona|nao esta funcionando|quebrou|travou|exception|stack|trace|sistema parado|operacao parada|recepcao travada|indisponivel|regressao|parou de funcionar/.test(text) || requestType === "Erro tecnico" || freshdeskType === "Incidente") {
+  if (/erro|bug|falha|incidente|nao funciona|não funciona|nao esta funcionando|não está funcionando|quebrou|travou|exception|stack|trace|sistema parado|operacao parada|operação parada|recepcao travada|recepção travada|indisponivel|indisponível|regressao|regressão|parou de funcionar/.test(text) || requestType === "Erro tecnico" || freshdeskType === "Incidente") {
     return "BUG (Erros)";
   }
 
@@ -199,7 +210,8 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
   const rawText = normalizeText(buildTicketText(ticket, conversations, context));
   const product = analysis.product && analysis.product !== "Nao identificado" ? analysis.product : inferProduct(rawText);
   const inferredType = inferFreshdeskTypeStrong(rawText, analysis.freshdeskType || inferFreshdeskType(rawText));
-  const freshdeskType = ensureAllowedFreshdeskType(inferredType);
+  let freshdeskType = ensureAllowedFreshdeskType(inferredType);
+  if (hasReportIntent(rawText) && !hasCommercialIntent(rawText)) freshdeskType = "Relatorio";
   const requestType = analysis.requestType || inferRequestType(rawText, freshdeskType);
   const priority = mergePriority(rawText, analysis.priority || inferPriority(rawText, freshdeskType), ticket);
   let recommendedScenario = analysis.recommendedScenario || inferScenario(product, requestType, freshdeskType, rawText);
@@ -207,10 +219,14 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
     recommendedScenario = product === "DataBusca" ? "Mover para CRM/DataBusca" : product === "DataCob" ? "Mover para Datacob" : "Revisao manual pelo Suporte";
   }
   if (freshdeskType === "Prospect") recommendedScenario = "Mover para Comercial";
+  if (freshdeskType === "Relatorio" && hasReportIntent(rawText) && asksNewFunctionality(rawText)) {
+    recommendedScenario = "Mover para Desenvolvimento";
+  }
   const initialNeedsDevelopmentSpec = Boolean(
     analysis.needsDevelopmentSpec ||
     recommendedScenario === "Mover para Desenvolvimento" ||
-    /bug|desenvolvimento|melhoria|customizacao|customizacao|incidente|erro tecnico/.test(normalizeText(`${requestType} ${freshdeskType} ${recommendedScenario}`))
+    (hasReportIntent(rawText) && asksNewFunctionality(rawText)) ||
+    /bug|desenvolvimento|melhoria|customizacao|customização|incidente|erro tecnico/.test(normalizeText(`${requestType} ${freshdeskType} ${recommendedScenario}`))
   );
   const inferredDevelopmentType = analysis.developmentType || inferDevelopmentType(rawText, requestType, freshdeskType);
   const needsDevelopmentSpec = initialNeedsDevelopmentSpec || ["Melhoria", "Customizacao", "BUG (Erros)"].includes(inferredDevelopmentType);

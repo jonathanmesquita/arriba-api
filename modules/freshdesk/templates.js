@@ -277,7 +277,13 @@ export function getRequester(ticket = {}, context = {}) {
 }
 
 export function getAgent(ticket = {}, context = {}) {
-  return ticket.agent || context.agent || {};
+  const agent = ticket.agent || context.agent || {};
+  const contact = agent.contact || {};
+  return {
+    ...agent,
+    name: agent.name || contact.name || ticket.agent_name || ticket.responder_name || "",
+    email: agent.email || contact.email || ticket.agent_email || ticket.responder_email || ""
+  };
 }
 
 export function getGroup(ticket = {}, context = {}) {
@@ -439,7 +445,7 @@ export function buildDevelopmentSpec(analysis, ticket = {}, context = {}) {
   const agent = getAgent(ticket, context);
   const clientName = company.name || company.businessname || ticket.company_name || requester.name || ticket.requester_name || ticket.name || "<NOME DO CLIENTE>";
   const clientId = ticket.company_id || ticket.customerId || "";
-  const analystName = agent.name || ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
+  const analystName = agent.name || agent.contact?.name || ticket.agent?.name || ticket.responder_name || ticket.agent_name || "<NOME ANALISTA>";
   const ticketId = ticket.id || ticket.ticketId || "<ID_TICKET>";
   const devType = analysis.developmentType || "BUG (Erros)";
 

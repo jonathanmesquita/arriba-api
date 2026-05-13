@@ -83,7 +83,13 @@ export function getCompany(ticket = {}, context = {}) {
 }
 
 export function getAgent(ticket = {}, context = {}) {
-  return ticket.agent || context.agent || {};
+  const agent = ticket.agent || context.agent || {};
+  const contact = agent.contact || {};
+  return {
+    ...agent,
+    name: firstNonEmpty(agent.name, contact.name, ticket.agent_name, ticket.responder_name),
+    email: firstNonEmpty(agent.email, contact.email, ticket.agent_email, ticket.responder_email)
+  };
 }
 
 export function getGroup(ticket = {}, context = {}) {
