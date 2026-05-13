@@ -10,7 +10,7 @@ import {
   updateTicket
 } from "../modules/freshdesk/freshdeskClient.js";
 import { analyzeSupportTicket } from "../modules/freshdesk/supportAnalyzer.js";
-import { buildQualityDashboard, logSupportAnalysis, readSupportLogs } from "../modules/freshdesk/localLogs.js";
+import { buildQualityDashboard, logSupportAnalysis, logSupportValidation, readSupportLogs } from "../modules/freshdesk/localLogs.js";
 import { listSupportedPlaceholders } from "../modules/freshdesk/placeholders.js";
 import {
   buildInternalNoteHtml,
@@ -105,6 +105,16 @@ export function createFreshdeskRouter() {
     try {
       const limit = Number(req.query.limit || 50);
       res.json({ logs: await readSupportLogs(limit) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+
+  router.post("/support/copilot/validation", async (req, res) => {
+    try {
+      const entry = await logSupportValidation(req.body || {});
+      res.json({ ok: Boolean(entry), validation: entry, writesEnabled: canWriteToFreshdesk() });
     } catch (error) {
       sendError(res, error);
     }

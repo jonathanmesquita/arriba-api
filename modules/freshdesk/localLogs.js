@@ -42,7 +42,10 @@ export async function logSupportAnalysis({ ticket = {}, analysis = {}, context =
       recommendedScenario: analysis.recommendedScenario || null,
       routine: analysis.routine || null,
       needsDevelopmentSpec: Boolean(analysis.needsDevelopmentSpec),
-      source: analysis.source || null
+      source: analysis.source || null,
+      confidence: analysis.confidence || null,
+      ruleWarnings: analysis.ruleWarnings || [],
+      validated: false
     };
     await fs.appendFile(LOG_FILE, JSON.stringify(entry) + "\n", "utf8");
     await trimLogs();
@@ -122,27 +125,77 @@ function detectRecurrence(logs) {
   return alerts.slice(0, 8);
 }
 
+
+export async function logSupportValidation({ ticketId, expected = {}, generated = {}, notes = "", approved = false } = {}) {
+  try {
+    await ensureLogDir();
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: nowIso(),
+      action: "validation",
+      ticketId: ticketId || generated.ticketId || null,
+      subject: generated.subject || null,
+      product: generated.product || null,
+      freshdeskType: generated.freshdeskType || null,
+      priority: generated.priority || null,
+      recommendedScenario: generated.recommendedScenario || null,
+      expectedProduct: expected.product || null,
+      expectedType: expected.freshdeskType || expected.type || null,
+      expectedPriority: expected.priority || null,
+      expectedScenario: expected.recommendedScenario || expected.scenario || null,
+      approved: Boolean(approved),
+      notes
+    };
+    await fs.appendFile(LOG_FILE, JSON.stringify(entry) + "\n", "utf8");
+    await trimLogs();
+    return entry;
+  } catch (error) {
+    console.warn("Nao foi possivel gravar validacao local do Support Copilot:", error.message);
+    return null;
+  }
+}
+
+function countRecent(logs, predicate) {
+  return logs.filter(predicate).length;
+}
+
+function lastHours(logs, hours) {
+  const min = Date.now() - hours * 60 * 60 * 1000;
+  return logs.filter((item) => new Date(item.createdAt || 0).getTime() >= min);
+}
+
 export async function buildQualityDashboard() {
   const logs = await readSupportLogs(300);
-  const total = logs.length;
-  const urgentCount = logs.filter((item) => item.priority === "Urgente").length;
-  const devCount = logs.filter((item) => item.needsDevelopmentSpec || ["Melhoria", "Customizacao", "BUG (Erros)"].includes(item.developmentType)).length;
-  const commercialCount = logs.filter((item) => item.recommendedScenario === "Mover para Comercial" || item.freshdeskType === "Prospect").length;
-  const recurrenceAlerts = detectRecurrence(logs);
+  const analysisLogs = logs.filter((item) => item.action !== "validation");
+  const validationLogs = logs.filter((item) => item.action === "validation");
+  const last24 = lastHours(analysisLogs, 24);
+  const total = analysisLogs.length;
+  const urgentCount = analysisLogs.filter((item) => item.priority === "Urgente").length;
+  const devCount = analysisLogs.filter((item) => item.needsDevelopmentSpec || ["Melhoria", "Customizacao", "BUG (Erros)"].includes(item.developmentType)).length;
+  const commercialCount = analysisLogs.filter((item) => item.recommendedScenario === "Mover para Comercial" || item.freshdeskType === "Prospect").length;
+  const recurrenceAlerts = detectRecurrence(last24.length >= 5 ? last24 : analysisLogs);
+  const validationApproved = validationLogs.filter((item) => item.approved).length;
 
   return {
     generatedAt: nowIso(),
     mode: "local-read-only-logs",
     totalAnalyses: total,
+    last24hAnalyses: last24.length,
     urgentCount,
     devCount,
     commercialCount,
+    validationCount: validationLogs.length,
+    validationApproved,
+    validationApprovalRate: validationLogs.length ? Math.round((validationApproved / validationLogs.length) * 100) : null,
     recurrenceAlerts,
-    topProducts: countBy(logs, "product"),
-    topTypes: countBy(logs, "freshdeskType"),
-    topPriorities: countBy(logs, "priority"),
-    topScenarios: countBy(logs, "recommendedScenario"),
-    topTerms: topTerms(logs),
-    recentLogs: logs.slice(0, 20)
+    topProducts: countBy(analysisLogs, "product"),
+    topTypes: countBy(analysisLogs, "freshdeskType"),
+    topPriorities: countBy(analysisLogs, "priority"),
+    topScenarios: countBy(analysisLogs, "recommendedScenario"),
+    topCompanies: countBy(analysisLogs, "companyName"),
+    topAgents: countBy(analysisLogs, "agentName"),
+    topTerms: topTerms(analysisLogs),
+    recentLogs: analysisLogs.slice(0, 20),
+    recentValidations: validationLogs.slice(0, 20)
   };
 }

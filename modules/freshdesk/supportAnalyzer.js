@@ -38,6 +38,72 @@ function inferFreshdeskType(text) {
   return "Duvida";
 }
 
+
+function hasCommercialIntent(text) {
+  return /comercial|proposta|orcamento|orçamento|contratacao|contratação|licenca|licença|valor de contrato|preco|preço|venda|comprar|contratar|demo|prospect|trial/.test(text);
+}
+
+function inferFreshdeskTypeStrong(text, currentType = "") {
+  const normalizedCurrent = normalizeText(currentType);
+
+  if (hasCommercialIntent(text)) return "Prospect";
+  if (/recepcao|recepção|importacao|importação|layout|csv|arquivo|remessa|carga/.test(text)) return "Recepcao de Arquivo";
+  if (/relatorio|relatório|extracao|extração|exportacao|exportação|dashboard|indicador|consulta|dados para listar|cpfs|contratos no processamento/.test(text)) return "Relatorio";
+  if (/lentidao|lentidão|lento|travando|performance|demora/.test(text)) return "Lentidao";
+  if (/integracao|integração|api|webhook|endpoint|conector/.test(text)) return "Integracao";
+  if (/reset|senha|login|acesso|token|tag|permissao|permissão/.test(text)) return "Reset Senha";
+  if (/treinamento|duvida|dúvida|como faco|como faço|orientacao|orientação|parametro|parâmetro|configurar|vincular/.test(text)) return "Duvida";
+  if (/melhoria|sugestao|sugestão|feature|nova funcionalidade|evolucao|evolução/.test(text)) return "Melhorias";
+  if (/erro|falha|bug|nao funciona|não funciona|problema|incidente|indisponivel|indisponível|sistema parado|exception|cannot insert|null/.test(text)) return "Incidente";
+
+  if (normalizedCurrent && normalizedCurrent !== "prospect") return currentType;
+  return normalizedCurrent === "prospect" && !hasCommercialIntent(text) ? "Duvida" : (currentType || "Duvida");
+}
+
+function mapFreshdeskPriority(value) {
+  const map = {
+    1: "Baixa",
+    2: "Media",
+    3: "Alta",
+    4: "Urgente",
+    baixa: "Baixa",
+    low: "Baixa",
+    media: "Media",
+    medium: "Media",
+    alta: "Alta",
+    high: "Alta",
+    urgente: "Urgente",
+    urgent: "Urgente"
+  };
+  const key = typeof value === "number" ? value : normalizeText(value || "");
+  return map[key] || null;
+}
+
+function mergePriority(text, inferredPriority, ticket = {}) {
+  const ticketPriority = mapFreshdeskPriority(ticket.priority_name || ticket.priority_label || ticket.priority);
+  if (ticketPriority === "Urgente") return "Urgente";
+  if (/recepcao travada|recepção travada|sistema parado|operacao parada|operação parada|bug bloqueante|indisponivel|indisponível|todos os usuarios|todos os usuários|producao parada|produção parada/.test(text)) return "Urgente";
+  if (ticketPriority === "Alta" && inferredPriority === "Baixa") return "Alta";
+  return inferredPriority || ticketPriority || "Media";
+}
+
+function buildRuleWarnings({ text, analysis = {}, freshdeskType, recommendedScenario, priority, product }) {
+  const warnings = [];
+  if (normalizeText(analysis.freshdeskType || "") === "prospect" && freshdeskType !== "Prospect") {
+    warnings.push("Tipo Prospect ajustado por regra local: nao havia indicio comercial forte no texto.");
+  }
+  if (freshdeskType === "Relatorio" && recommendedScenario === "Mover para Comercial") {
+    warnings.push("Relatorio nao deve ir para Comercial sem evidência de proposta, licença ou contratação.");
+  }
+  if (priority === "Urgente" && !/parado|travada|bloqueante|indisponivel|indisponível|urgente|producao|produção/.test(text)) {
+    warnings.push("Prioridade urgente preservada/indicada; revisar se o impacto informado justifica urgência.");
+  }
+  if (product === "Nao identificado") {
+    warnings.push("Produto nao identificado com alta confiança. Revisar tags e descrição do ticket.");
+  }
+  return warnings;
+}
+
 function inferRequestType(text, freshdeskType) {
   if (freshdeskType === "Prospect") return "Solicitacao comercial";
   if (freshdeskType === "Incidente" || /erro|falha|bug|exception|nao funciona|problema/.test(text)) return "Erro tecnico";
@@ -131,11 +197,16 @@ function ensureAllowedFreshdeskType(value) {
 
 function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}) {
   const rawText = normalizeText(buildTicketText(ticket, conversations, context));
-  const product = analysis.product || inferProduct(rawText);
-  const freshdeskType = ensureAllowedFreshdeskType(analysis.freshdeskType || inferFreshdeskType(rawText));
+  const product = analysis.product && analysis.product !== "Nao identificado" ? analysis.product : inferProduct(rawText);
+  const inferredType = inferFreshdeskTypeStrong(rawText, analysis.freshdeskType || inferFreshdeskType(rawText));
+  const freshdeskType = ensureAllowedFreshdeskType(inferredType);
   const requestType = analysis.requestType || inferRequestType(rawText, freshdeskType);
-  const priority = analysis.priority || inferPriority(rawText, freshdeskType);
-  const recommendedScenario = analysis.recommendedScenario || inferScenario(product, requestType, freshdeskType, rawText);
+  const priority = mergePriority(rawText, analysis.priority || inferPriority(rawText, freshdeskType), ticket);
+  let recommendedScenario = analysis.recommendedScenario || inferScenario(product, requestType, freshdeskType, rawText);
+  if (freshdeskType === "Relatorio" && !hasCommercialIntent(rawText) && recommendedScenario === "Mover para Comercial") {
+    recommendedScenario = product === "DataBusca" ? "Mover para CRM/DataBusca" : product === "DataCob" ? "Mover para Datacob" : "Revisao manual pelo Suporte";
+  }
+  if (freshdeskType === "Prospect") recommendedScenario = "Mover para Comercial";
   const initialNeedsDevelopmentSpec = Boolean(
     analysis.needsDevelopmentSpec ||
     recommendedScenario === "Mover para Desenvolvimento" ||
@@ -184,6 +255,7 @@ function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}
         ],
     needsDevelopmentSpec,
     agentValidation,
+    ruleWarnings: buildRuleWarnings({ text: rawText, analysis, freshdeskType, recommendedScenario, priority, product }),
     nextAction: analysis.nextAction || "Revisar a analise, confirmar evidencias faltantes e escolher a resposta predefinida mais adequada."
   };
 
