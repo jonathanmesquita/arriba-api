@@ -62,6 +62,15 @@ function hasKnowledgeType(matches = [], type = "") {
   return matches.some((item) => normalizeText(item.freshdeskType || "") === expected);
 }
 
+function dedupeKnowledgeArticles(articles = []) {
+  const map = new Map();
+  articles.filter(Boolean).forEach((article) => {
+    const key = String(article.id || article.url || article.title || JSON.stringify(article));
+    if (!map.has(key)) map.set(key, article);
+  });
+  return [...map.values()].sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)));
+}
+
 function asksNewFunctionality(text) {
   return /disponibilizar|criar|nova funcionalidade|funcionalidade|implementar|incluir|adicionar|seria de grande ajuda|precisamos de|gostaria que|solicitamos|possibilidade/.test(text);
 }
@@ -225,7 +234,8 @@ function ensureAllowedFreshdeskType(value) {
 
 function hydrateAnalysis(analysis, ticket = {}, conversations = [], context = {}) {
   const rawText = normalizeText(buildTicketText(ticket, conversations, context));
-  const knowledgeMatches = findKnowledgeMatches(ticket, conversations, context);
+  const contextKnowledge = Array.isArray(context.knowledgeBase) ? context.knowledgeBase : [];
+  const knowledgeMatches = dedupeKnowledgeArticles([...contextKnowledge, ...findKnowledgeMatches(ticket, conversations, context)]);
   const primaryKnowledge = knowledgeMatches[0] || null;
   const hasVersionKnowledge = hasKnowledgeType(knowledgeMatches, "Versao") || hasVersionIntent(rawText);
   const product = hasVersionKnowledge
