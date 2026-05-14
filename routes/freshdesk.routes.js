@@ -6,10 +6,12 @@ import {
   getTicketConversations,
   getRequesterTickets,
   isFreshdeskConfigured,
+  searchSolutionArticles,
   searchTickets,
   updateTicket
 } from "../modules/freshdesk/freshdeskClient.js";
 import { analyzeSupportTicket } from "../modules/freshdesk/supportAnalyzer.js";
+import { searchLocalKnowledge } from "../modules/freshdesk/knowledgeBase.js";
 import { buildQualityDashboard, logSupportAnalysis, logSupportValidation, readSupportLogs } from "../modules/freshdesk/localLogs.js";
 import { listSupportedPlaceholders } from "../modules/freshdesk/placeholders.js";
 import {
@@ -87,6 +89,23 @@ export function createFreshdeskRouter() {
 
   router.get("/freshdesk/templates", (req, res) => {
     res.json({ templates: FRESHDESK_TEMPLATES });
+  });
+
+  router.get("/freshdesk/knowledge/search", async (req, res) => {
+    try {
+      const term = req.query.term || req.query.q || "";
+      const local = searchLocalKnowledge(term, { maxResults: Number(req.query.limit || 8) });
+      const freshdesk = await searchSolutionArticles(term, { maxResults: Number(req.query.limit || 8) });
+      res.json({
+        term,
+        local,
+        freshdesk,
+        source: process.env.FRESHDESK_USE_SOLUTIONS_API === "true" ? "local+freshdesk" : "local",
+        freshdeskSolutionsEnabled: process.env.FRESHDESK_USE_SOLUTIONS_API === "true"
+      });
+    } catch (error) {
+      sendError(res, error);
+    }
   });
 
   router.get("/freshdesk/placeholders", (req, res) => {

@@ -256,6 +256,34 @@ async function searchTicketsByRequesterFallback(requesterId, requesterEmail = ""
   return dedupeTickets(collected);
 }
 
+
+export async function searchSolutionArticles(term = "", options = {}) {
+  const query = String(term || "").trim();
+  const maxResults = Number(options.maxResults || 10);
+  if (!query) return [];
+  if (process.env.FRESHDESK_USE_SOLUTIONS_API !== "true") return [];
+
+  const attempts = [
+    `/search/solutions?term=${encodeURIComponent(query)}`,
+    `/search/solutions?query=${encodeURIComponent(query)}`
+  ];
+
+  for (const path of attempts) {
+    const result = await safeFreshdesk(path, null);
+    if (!result) continue;
+    const list = Array.isArray(result)
+      ? result
+      : Array.isArray(result.results)
+        ? result.results
+        : Array.isArray(result.articles)
+          ? result.articles
+          : [];
+    if (list.length) return list.slice(0, maxResults);
+  }
+
+  return [];
+}
+
 export async function getRequesterTickets(requesterId, requesterEmail = "", options = {}) {
   const maxResults = Number(options.maxResults || 50);
   const collected = [];

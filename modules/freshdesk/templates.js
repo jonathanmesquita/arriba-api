@@ -130,6 +130,27 @@ Atenciosamente,
 {{ticket.agent.name}}`
   },
 
+  versaoAgendamento: {
+    title: "@Respostas para o cliente quer atualizar versao - (Resposta do agendamento)",
+    type: "public_reply",
+    useWhen: ["versao", "agendamento_versao", "checklist_versao", "homologacao", "producao"],
+    body: `Boa tarde, {{ticket.requester.firstname}},
+
+O agendamento deve ocorrer no ambiente de homologacao.
+
+Em anexo, segue o manual com as instrucoes para o agendamento automatico de versao do DataCob.
+
+De forma resumida, o cliente deve acessar o ambiente de homologacao, abrir a opcao Checklist versao, validar os itens necessarios e finalizar o checklist para selecionar a data e horario da virada.
+
+Atencao as principais regras:
+- Para agendamento no mesmo dia, o checklist deve ser finalizado ate as 17h;
+- Agendamentos automaticos devem ocorrer de segunda a quinta-feira, entre 20h e 00h;
+- Agendamentos para sexta-feira, sabado ou domingo exigem atuacao/validacao do suporte;
+- Em caso de cancelamento do agendamento, sera necessario contato com o suporte para nova orientacao.
+
+Obrigado!`
+  },
+
   notaInternaIA: {
     title: "@Anotacoes - Analise IA Support Copilot",
     type: "private_note",
@@ -208,6 +229,10 @@ Validacao agente/grupo:
 
 Resposta predefinida recomendada:
 {{ai.recommendedTemplateTitle}}
+
+Base de conhecimento sugerida:
+{{ai.knowledgeTitle}}
+{{ai.knowledgeSummary}}
 
 Checklist de evidencias:
 {{ai.checklist}}
@@ -344,7 +369,10 @@ export function buildTemplateVariables(ticket = {}, analysis = {}, context = {})
     "ai.recommendedScenario": analysis.recommendedScenario || "Revisao manual pelo Suporte",
     "ai.recommendedTemplateTitle": recommendedTemplate.title,
     "ai.checklist": checklist,
-    "ai.nextAction": analysis.nextAction || "Revisar a analise, confirmar evidencias e responder o cliente."
+    "ai.nextAction": analysis.nextAction || "Revisar a analise, confirmar evidencias e responder o cliente.",
+    "ai.knowledgeTitle": (analysis.knowledgeBase || [])[0]?.title || "Base nao localizada",
+    "ai.knowledgeSummary": analysis.knowledgeSummary || "Sem base relacionada.",
+    "ai.knowledgeUrl": (analysis.knowledgeBase || [])[0]?.url || ""
   };
 }
 
@@ -372,6 +400,10 @@ export function getRecommendedTemplate(analysis = {}) {
     analysis.currentScenario,
     analysis.nextAction
   ].join(" "));
+
+  if (/versao|agendamento automatico|checklist versao|virada de versao/.test(text) || analysis.freshdeskType === "Versao") {
+    return { key: "versaoAgendamento", title: FRESHDESK_TEMPLATES.versaoAgendamento.title };
+  }
 
   if (/comercial|prospect|proposta|orcamento|licenca|contratacao|demo|teste/.test(text)) {
     return { key: "direcionamentoComercial", title: FRESHDESK_TEMPLATES.direcionamentoComercial.title };

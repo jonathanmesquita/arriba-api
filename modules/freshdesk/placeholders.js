@@ -153,7 +153,11 @@ function buildAiVariables(analysis = {}) {
     "ai.nextAction": analysis.nextAction || "Revisar a analise e confirmar evidencias.",
     "ai.needsDevelopmentSpec": analysis.needsDevelopmentSpec ? "Sim" : "Nao",
     "ai.agentValidationStatus": analysis.agentValidation?.status || "Nao validado",
-    "ai.agentValidationMessage": analysis.agentValidation?.message || ""
+    "ai.agentValidationMessage": analysis.agentValidation?.message || "",
+    "ai.knowledgeTitle": (analysis.knowledgeBase || [])[0]?.title || "Base nao localizada",
+    "ai.knowledgeSummary": analysis.knowledgeSummary || "Sem base relacionada.",
+    "ai.knowledgeUrl": (analysis.knowledgeBase || [])[0]?.url || "",
+    "ai.knowledgeSource": (analysis.knowledgeBase || [])[0]?.source || ""
   };
 }
 
@@ -327,6 +331,10 @@ export function listSupportedPlaceholders() {
     "ai.checklist",
     "ai.nextAction",
     "ai.agentValidationStatus",
-    "ai.agentValidationMessage"
+    "ai.agentValidationMessage",
+    "ai.knowledgeTitle",
+    "ai.knowledgeSummary",
+    "ai.knowledgeUrl",
+    "ai.knowledgeSource"
   ];
 }
