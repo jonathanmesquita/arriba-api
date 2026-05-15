@@ -23,6 +23,25 @@ export const LOCAL_KNOWLEDGE_ARTICLES = [
     recommendedTemplateTitle: "@Respostas para o cliente quer atualizar versao - (Resposta do agendamento)",
     url: "docs/datacob/versao/agendamento-automatico-de-versao",
     confidenceBoost: 0.18,
+    freshdeskArticleIds: ["48001282071", "48001170514", "48001280258"],
+    freshdeskFolderId: "48000676183",
+    freshdeskCannedResponses: [
+      {
+        id: "48000272258",
+        title: "@Respostas para o cliente atualizar versao - (Checklist Versao)",
+        url: "https://ph3a.freshdesk.com/a/admin/canned_responses/folders/48000118950/responses/48000272258/edit"
+      },
+      {
+        id: "48000278091",
+        title: "@Respostas para o cliente quer atualizar versao - (Resposta do agendamento)",
+        url: "https://ph3a.freshdesk.com/a/admin/canned_responses/folders/48000118950/responses/48000278091/edit"
+      },
+      {
+        id: "48000275736",
+        title: "#Respostas Tickets 17: Respostas DataCob - Atualizacao de Versao DataCob Homologacao/Producao",
+        url: "https://ph3a.freshdesk.com/a/admin/canned_responses/folders/48000118950/responses/48000275736/edit"
+      }
+    ],
     keywords: [
       "versao",
       "versão",
@@ -79,6 +98,8 @@ Atencao as principais regras:
 - Agendamentos automaticos devem ocorrer de segunda a quinta-feira, entre 20h e 00h;
 - Agendamentos para sexta-feira, sabado ou domingo exigem atuacao/validacao do suporte;
 - Em caso de cancelamento do agendamento, sera necessario contato com o suporte para nova orientacao.
+
+Caso a solicitacao seja apenas para atualizar a versao, orientar o cliente a efetuar o Checklist Versao. Se nao conseguir realizar o agendamento, solicitar data e horario desejados para que o suporte possa apoiar a atualizacao do ambiente.
 
 Obrigado!`,
     nextAction:
