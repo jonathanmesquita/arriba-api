@@ -400,6 +400,80 @@ export async function searchUnifiedKnowledge(term = "", options = {}) {
   };
 }
 
+function countArticlesBy(articles = [], key) {
+  return articles.reduce((acc, article) => {
+    const label = article?.[key] || "Nao informado";
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+export async function getKnowledgeArticlesIndex(options = {}) {
+  const local = searchLocalKnowledge("", { maxResults: Number(options.localLimit || 100) });
+  let sync = null;
+  let freshdesk = [];
+
+  if (isFreshdeskSolutionsEnabled()) {
+    sync = await syncFreshdeskKnowledge({
+      force: options.force === true,
+      maxPages: Number(options.maxPages || 5)
+    });
+    freshdesk = sync.articles || [];
+  } else {
+    sync = {
+      enabled: false,
+      total: 0,
+      message: "FRESHDESK_USE_SOLUTIONS_API=false. Usando apenas base local."
+    };
+  }
+
+  const combined = dedupeArticles([...freshdesk, ...local]);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    config: getFreshdeskSolutionsConfig(),
+    sync,
+    totals: {
+      local: local.length,
+      freshdesk: freshdesk.length,
+      combined: combined.length
+    },
+    bySource: countArticlesBy(combined, "sourceLabel"),
+    byProduct: countArticlesBy(combined, "product"),
+    byType: countArticlesBy(combined, "freshdeskType"),
+    articles: combined.map((article) => ({
+      id: article.id,
+      title: article.title,
+      source: article.source,
+      sourceLabel: article.sourceLabel || article.source,
+      product: article.product,
+      freshdeskType: article.freshdeskType,
+      folderId: article.folderId,
+      folderName: article.folderName,
+      categoryId: article.categoryId,
+      categoryName: article.categoryName,
+      status: article.status,
+      url: article.url,
+      summary: article.summary,
+      score: article.score,
+      updatedAt: article.updatedAt,
+      keywords: article.keywords || []
+    }))
+  };
+}
+
+export function getKnowledgeCacheState() {
+  return {
+    enabled: isFreshdeskSolutionsEnabled(),
+    cachedArticles: solutionCache.articles.length,
+    cachedFolders: [...solutionCache.folders.keys()],
+    cachedArticleIds: [...solutionCache.byId.keys()],
+    syncedAt: solutionCache.syncedAt,
+    expiresAt: solutionCache.expiresAt ? new Date(solutionCache.expiresAt).toISOString() : null,
+    lastError: solutionCache.lastError
+  };
+}
+
 export function getFreshdeskSolutionsConfig() {
   return {
     enabled: isFreshdeskSolutionsEnabled(),

@@ -45,6 +45,10 @@ export async function logSupportAnalysis({ ticket = {}, analysis = {}, context =
       source: analysis.source || null,
       confidence: analysis.confidence || null,
       ruleWarnings: analysis.ruleWarnings || [],
+      knowledgeTotal: context.knowledgeSearch?.totalCount ?? (Array.isArray(context.knowledgeBase) ? context.knowledgeBase.length : 0),
+      knowledgeFreshdesk: context.knowledgeSearch?.freshdeskCount ?? 0,
+      knowledgeLocal: context.knowledgeSearch?.localCount ?? 0,
+      knowledgeSource: context.knowledgeSearch?.source || null,
       validated: false
     };
     await fs.appendFile(LOG_FILE, JSON.stringify(entry) + "\n", "utf8");
@@ -197,5 +201,32 @@ export async function buildQualityDashboard() {
     topTerms: topTerms(analysisLogs),
     recentLogs: analysisLogs.slice(0, 20),
     recentValidations: validationLogs.slice(0, 20)
+  };
+}
+
+
+export async function buildKnowledgeGapsDashboard() {
+  const logs = await readSupportLogs(300);
+  const analysisLogs = logs.filter((item) => item.action !== "validation");
+  const withoutKnowledge = analysisLogs.filter((item) => Number(item.knowledgeTotal || 0) === 0);
+  const withOnlyLocal = analysisLogs.filter((item) => Number(item.knowledgeTotal || 0) > 0 && Number(item.knowledgeFreshdesk || 0) === 0);
+  const withFreshdesk = analysisLogs.filter((item) => Number(item.knowledgeFreshdesk || 0) > 0);
+
+  const byType = countBy(withoutKnowledge, "freshdeskType");
+  const byProduct = countBy(withoutKnowledge, "product");
+  const missingTerms = topTerms(withoutKnowledge);
+
+  return {
+    generatedAt: nowIso(),
+    totalAnalyses: analysisLogs.length,
+    withoutKnowledgeCount: withoutKnowledge.length,
+    withOnlyLocalCount: withOnlyLocal.length,
+    withFreshdeskCount: withFreshdesk.length,
+    coverageRate: analysisLogs.length ? Math.round(((analysisLogs.length - withoutKnowledge.length) / analysisLogs.length) * 100) : null,
+    freshdeskUsageRate: analysisLogs.length ? Math.round((withFreshdesk.length / analysisLogs.length) * 100) : null,
+    byType,
+    byProduct,
+    missingTerms,
+    recentWithoutKnowledge: withoutKnowledge.slice(0, 20)
   };
 }

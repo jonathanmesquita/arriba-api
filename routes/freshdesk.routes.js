@@ -14,10 +14,12 @@ import {
   getFreshdeskSolutionArticle,
   getFreshdeskFolderArticles,
   getFreshdeskSolutionsConfig,
+  getKnowledgeArticlesIndex,
+  getKnowledgeCacheState,
   searchUnifiedKnowledge,
   syncFreshdeskKnowledge
 } from "../modules/freshdesk/freshdeskSolutions.js";
-import { buildQualityDashboard, logSupportAnalysis, logSupportValidation, readSupportLogs } from "../modules/freshdesk/localLogs.js";
+import { buildKnowledgeGapsDashboard, buildQualityDashboard, logSupportAnalysis, logSupportValidation, readSupportLogs } from "../modules/freshdesk/localLogs.js";
 import { listSupportedPlaceholders } from "../modules/freshdesk/placeholders.js";
 import {
   buildInternalNoteHtml,
@@ -163,6 +165,52 @@ export function createFreshdeskRouter() {
     try {
       const result = await syncFreshdeskKnowledge({ force: req.query.force === "true" });
       res.json({ ...result, config: getFreshdeskSolutionsConfig() });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/freshdesk/knowledge/admin", async (req, res) => {
+    try {
+      const index = await getKnowledgeArticlesIndex({
+        force: req.query.force === "true",
+        maxPages: Number(req.query.maxPages || 5)
+      });
+      const gaps = await buildKnowledgeGapsDashboard();
+      res.json({
+        ok: true,
+        mode: canWriteToFreshdesk() ? "read-write" : "read-only",
+        writesEnabled: canWriteToFreshdesk(),
+        cache: getKnowledgeCacheState(),
+        index,
+        gaps
+      });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/freshdesk/knowledge/articles", async (req, res) => {
+    try {
+      const index = await getKnowledgeArticlesIndex({ force: req.query.force === "true" });
+      const source = String(req.query.source || "").toLowerCase();
+      const type = String(req.query.type || "").toLowerCase();
+      const product = String(req.query.product || "").toLowerCase();
+      const articles = index.articles.filter((article) => {
+        const articleSource = String(article.sourceLabel || article.source || "").toLowerCase();
+        const articleType = String(article.freshdeskType || "").toLowerCase();
+        const articleProduct = String(article.product || "").toLowerCase();
+        return (!source || articleSource.includes(source)) && (!type || articleType.includes(type)) && (!product || articleProduct.includes(product));
+      });
+      res.json({ ...index, articles, filteredTotal: articles.length });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/freshdesk/knowledge/gaps", async (req, res) => {
+    try {
+      res.json(await buildKnowledgeGapsDashboard());
     } catch (error) {
       sendError(res, error);
     }
