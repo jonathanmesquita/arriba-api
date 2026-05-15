@@ -21,6 +21,8 @@ import {
 } from "../modules/freshdesk/freshdeskSolutions.js";
 import { buildKnowledgeGapsDashboard, buildQualityDashboard, logSupportAnalysis, logSupportValidation, readSupportLogs } from "../modules/freshdesk/localLogs.js";
 import { listSupportedPlaceholders } from "../modules/freshdesk/placeholders.js";
+import { getManualCatalogSummary, manualCatalog } from "../modules/knowledge/manualCatalog.js";
+import { matchManualsForTicket, searchManuals } from "../modules/knowledge/manualSearch.js";
 import {
   buildInternalNoteHtml,
   FRESHDESK_TEMPLATES,
@@ -99,6 +101,9 @@ async function enrichTicketResultWithKnowledge(result, options = {}) {
     maxResults: Number(options.maxResults || 8),
     forceSync: options.forceSync === true
   });
+  const manualMatch = matchManualsForTicket(result.ticket, result.conversations || [], result.context || {}, {
+    limit: Number(options.manualLimit || 6)
+  });
 
   return {
     ...result,
@@ -113,6 +118,13 @@ async function enrichTicketResultWithKnowledge(result, options = {}) {
         localCount: knowledge.local?.length || 0,
         freshdeskCount: knowledge.freshdesk?.length || 0,
         totalCount: knowledge.combined?.length || 0
+      },
+      manuals: manualMatch.manuals || [],
+      manualMatch: {
+        term: manualMatch.term,
+        detected: manualMatch.detected,
+        total: manualMatch.total,
+        catalog: manualMatch.summary
       }
     }
   };
@@ -236,6 +248,40 @@ export function createFreshdeskRouter() {
     } catch (error) {
       sendError(res, error);
     }
+  });
+
+
+
+  router.get("/freshdesk/manuals", (req, res) => {
+    const category = String(req.query.category || "").toLowerCase();
+    const client = String(req.query.client || "").toLowerCase();
+    const moduleName = String(req.query.module || "").toLowerCase();
+    const manuals = manualCatalog.filter((manual) => {
+      const c = String(manual.category || "").toLowerCase();
+      const cl = String(manual.client || "").toLowerCase();
+      const m = String(manual.module || "").toLowerCase();
+      return (!category || c.includes(category)) && (!client || cl.includes(client)) && (!moduleName || m.includes(moduleName));
+    });
+    res.json({ ok: true, summary: getManualCatalogSummary(), manuals });
+  });
+
+  router.get("/freshdesk/manuals/search", (req, res) => {
+    const term = req.query.term || req.query.q || "";
+    const result = searchManuals(term, {
+      limit: Number(req.query.limit || 8),
+      category: req.query.category,
+      client: req.query.client,
+      module: req.query.module
+    });
+    res.json(result);
+  });
+
+  router.post("/freshdesk/manuals/match", (req, res) => {
+    const ticket = req.body?.ticket || req.body || {};
+    const conversations = req.body?.conversations || [];
+    const context = req.body?.context || {};
+    const result = matchManualsForTicket(ticket, conversations, context, { limit: Number(req.query.limit || 6) });
+    res.json(result);
   });
 
   router.get("/freshdesk/placeholders", (req, res) => {
